@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: wireguard-cni
+  namespace: wireguard-kubernetes
+  labels:
+    k8s-app: wireguard-cni
+spec:
+  selector:
+    matchLabels:
+      k8s-app: wireguard-cni
+  template:
+    metadata:
+      labels:
+        k8s-app: wireguard-cni
+    spec:
+      hostNetwork: true
+      tolerations:
+      - key: node-role.kubernetes.io/master
+        operator: Exists
+      containers:
+      - name: wireguard-cni
+        image: docker.io/library/wireguard-cni:latest
+        imagePullPolicy: Never
+        securityContext:
+          runAsUser: 0
+          privileged: true # TBD
+          capabilities:
+            add:
+              - "CAP_NET_ADMIN"
+              - "CAP_NET_RAW"
+              - "SETFCAP"
+        volumeMounts:
+        - name: etc-cni-netd
+          mountPath: /etc/cni/net.d/
+      terminationGracePeriodSeconds: 30
+      volumes:
+      - name: etc-cni-netd
+        hostPath:
+          path: /etc/cni/net.d/
