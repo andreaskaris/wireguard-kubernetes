@@ -1,5 +1,6 @@
 FROM registry.fedoraproject.org/fedora:35
 RUN yum install wireguard-tools iproute iputils -y
 # COPY wireguard-cni /wireguard-cni
+ADD bin/ /cni-bin
 COPY entrypoint.sh /entrypoint.sh
 ENTRYPOINT [ "/entrypoint.sh" ]

@@ -33,8 +33,36 @@ spec:
         volumeMounts:
         - name: etc-cni-netd
           mountPath: /etc/cni/net.d/
+        - name: etc-wireguard
+          mountPath: /etc/wireguard/
+        - name: opt-cni-bin
+          mountPath: /opt/cni/bin/
+      - name: wireguard-wgk8s
+        image: docker.io/library/wireguard-wgk8s:latest
+        imagePullPolicy: Never
+        securityContext:
+          runAsUser: 0
+          privileged: true # TBD
+          capabilities:
+            add:
+              - "CAP_NET_ADMIN"
+              - "CAP_NET_RAW"
+              - "SETFCAP"
+        volumeMounts:
+        - name: etc-cni-netd
+          mountPath: /etc/cni/net.d/
+        - name: etc-wireguard
+          mountPath: /etc/wireguard/
+        - name: opt-cni-bin
+          mountPath: /opt/cni/bin/
       terminationGracePeriodSeconds: 30
       volumes:
       - name: etc-cni-netd
         hostPath:
           path: /etc/cni/net.d/
+      - name: etc-wireguard
+        hostPath:
+          path: /etc/wireguard
+      - name: opt-cni-bin
+        hostPath:
+          path: /opt/cni/bin/

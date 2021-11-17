@@ -3,34 +3,169 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
+	"log"
+	"os"
+	"strings"
 
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog"
+
+	"github.com/andreaskaris/wireguard-kubernetes/controller/utils"
+	"github.com/andreaskaris/wireguard-kubernetes/controller/wireguard"
 )
 
 var kubeconfig = flag.String("kubeconfig", "", "Location of kubeconfig file")
+var wireguardPrivateKey = flag.String("wg-private-key", "/etc/wireguard/private", "Location of the wireguard private key")
+var wireguardPublicKey = flag.String("wg-public-key", "/etc/wireguard/public", "Location of the wireguard public key")
+var wireguardNamespace = flag.String("wg-namespace", "wireguard-kubernetes", "Name of the wireguard-kubernetes namespace")
+var hostname = flag.String("hostname", func() string { s, _ := os.Hostname(); return s }(), "Hostname of this system")
+
+// var sockaddr = flag.String("sockaddr", "/var/run/wgk8s/wgk8s.sock", "Location wgk8s socket (for CNI communication)")
 
 func main() {
+	klog.InitFlags(nil)
+	defer klog.Flush()
+
 	flag.Parse()
 
-	config, _ := clientcmd.BuildConfigFromFlags("", *kubeconfig)
-	clientset, _ := kubernetes.NewForConfig(config)
-	pods, _ := clientset.CoreV1().Pods("").List(context.TODO(), v1.ListOptions{})
-	fmt.Printf("There are %d pods in the cluster\n", len(pods.Items))
-	nodes, _ := clientset.CoreV1().Nodes().List(context.TODO(), v1.ListOptions{})
-	fmt.Printf("There are %d nodes in the cluster\n", len(nodes.Items))
+	// set up kubernetes client
+	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	if err != nil {
+		log.Fatal(err)
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	podsWatcher, _ := clientset.CoreV1().Pods("").Watch(context.TODO(), v1.ListOptions{})
-	nodesWatcher, _ := clientset.CoreV1().Nodes().Watch(context.TODO(), v1.ListOptions{})
+	// set up minimum infrastructure
+	if err := utils.EnsureWireguardKeys(*wireguardPrivateKey, *wireguardPublicKey); err != nil {
+		log.Fatal(err)
+	}
+	if err := utils.EnsureNamespace(*wireguardNamespace); err != nil {
+		log.Fatal(err)
+	}
 
+	// read the local public and private key
+	/*privKey, err := os.ReadFile(*wireguardPrivateKey)
+	localPrivateKey := strings.TrimSuffix(string(privKey), "\n")
+	if localPrivateKey == "" {
+		log.Fatal("Cannot read privkey:", err)
+	}*/
+	localPrivateKey := "/etc/wireguard/private"
+
+	pubKey, err := os.ReadFile(*wireguardPublicKey)
+	localPublicKey := strings.TrimSuffix(string(pubKey), "\n")
+	if localPublicKey == "" {
+		log.Fatal("Cannot read pubkey:", err)
+	}
+
+	// annotate the node which belongs to this process with the public key
+	klog.V(5).Info("Updating label of node: ", *hostname, " with public key: ", string(localPublicKey))
+	if err := utils.AddPublicKeyLabel(clientset, *hostname, string(localPublicKey)); err != nil {
+		log.Fatal("Cannot add public key annotation to node:", err)
+	}
+
+	// get information about local node
+	node, err := clientset.CoreV1().Nodes().Get(context.TODO(), *hostname, metav1.GetOptions{})
+	if err != nil {
+		log.Fatal("Cannot retrieve information about local node: ", err)
+	}
+	localHostname := *hostname
+	localOuterIp, err := utils.GetNodeInternalIp(node)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Create a list of peers of this node.
+	peerList := wireguard.NewPeerList()
+
+	// monitor nodes
+	nodesWatcher, _ := clientset.CoreV1().Nodes().Watch(context.TODO(), metav1.ListOptions{})
+
+	// add a watcher for all nodes
 	for {
 		select {
-		case event := <-podsWatcher.ResultChan():
-			fmt.Println("Pod event: ", event)
 		case event := <-nodesWatcher.ResultChan():
-			fmt.Println("Node event: ", event)
+			if event.Type == watch.Added || event.Type == watch.Deleted || event.Type == watch.Modified {
+				node := event.Object.(*corev1.Node)
+				peerHostname := node.Name
+				if localHostname == peerHostname {
+					continue
+				}
+				nodeAnnotations := node.GetAnnotations()
+				peerPublicKey, ok := nodeAnnotations["wireguard.kubernetes.io/publickey"]
+				if !ok {
+					klog.V(5).Info("Could not get annotation for node, skipping: ", peerHostname)
+					continue
+				}
+
+				peerOuterIp, err := utils.GetNodeInternalIp(node)
+				if err != nil {
+					klog.V(1).Info(err.Error())
+					continue
+				}
+
+				if event.Type == watch.Added || event.Type == watch.Modified {
+					klog.V(5).Info("Node added or updated")
+					err = peerList.UpdateOrAdd(&wireguard.Peer{
+						LocalHostname:      localHostname,
+						PeerHostname:       peerHostname,
+						LocalOuterIp:       localOuterIp,
+						LocalInnerIp:       utils.GetInnerToOuterIp(localOuterIp),
+						PeerOuterIp:        peerOuterIp,
+						PeerInnerIp:        utils.GetInnerToOuterIp(peerOuterIp),
+						PeerPublicKey:      peerPublicKey,
+						LocalPrivateKey:    string(localPrivateKey),
+						LocalOuterPort:     10000,
+						PeerOuterPort:      10000,
+						LocalInterfaceName: "wg0",
+					})
+				} else {
+					klog.V(1).Info("Node deleted")
+					err = peerList.Delete(peerHostname)
+				}
+				if err != nil {
+					log.Fatal(err)
+				}
+
+				err = utils.UpdateWireguardTunnel(
+					*wireguardNamespace,
+					"wg0",
+					localOuterIp,
+					10000,
+					utils.GetInnerToOuterIp(localOuterIp),
+					string(localPrivateKey),
+					peerList)
+
+				if err != nil {
+					log.Fatal(err)
+				}
+			}
 		}
 	}
+	//}(peerList)
+
+	/*
+		// Create socket directory if it does not yet exist.
+		utils.PrepareSocketPath(*sockaddr)
+
+		// Listen on the Linux socket
+		ln, err := net.Listen("unix", *sockaddr)
+		if err != nil {
+			log.Fatalf("Cannot listen on unix socket %s: %s", *sockaddr, err.Error())
+		}
+
+		rpc.Register(peerList)
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				log.Fatalf("Cannot accept connection: %s", err.Error())
+			}
+			go rpc.ServeConn(conn)
+		}*/
 }

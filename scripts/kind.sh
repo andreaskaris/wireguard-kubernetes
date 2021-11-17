@@ -54,11 +54,15 @@ build_images() {
 	echo "Building and loading wireguard-cni image"
 	make -C container-images/wireguard-cni build-fedora
 	kind load docker-image wireguard-cni
+	echo "Building and loading wireguard-wgk8s image"
+	make -C container-images/wireguard-wgk8s build-fedora
+	kind load docker-image wireguard-wgk8s
 }
 
 deploy_wireguard_kubernetes() {
 	echo "Deploying wireguard kubernetes"
 	kubectl apply -f custom-resources/kind/namespace.yaml
+	kubectl apply -f custom-resources/kind/rolebindings.yaml
 	kubectl apply -f custom-resources/kind/daemonset.yaml
 }
 
