@@ -116,39 +116,41 @@ func AddPublicKeyLabel(c *kubernetes.Clientset, hostName, pubKey string) error {
 	return nil
 }
 
-func UpdateWireguardTunnel(wireguardNamespace string, wireguardInterface string, localOuterIp net.IP, localOuterPort int, localInnerIp net.IP, localPrivateKey string, pl *PeerList) error {
+func InitWireguardTunnel(wireguardNamespace string, wireguardInterface string, localOuterIp net.IP, localOuterPort int, localInnerIp net.IP, localPrivateKey string) error {
+	tunnelExists, err := isWireguardTunnel(wireguardNamespace, wireguardInterface)
+	if err != nil {
+		return err
+	}
+
+	if tunnelExists {
+		err := deleteWireguardTunnel(wireguardNamespace, wireguardInterface)
+		if err != nil {
+			klog.V(5).Info("Could not delete tunnel endpoint: ", err)
+		}
+	}
+	// add new tunnels, for each peer
+	err = createWireguardTunnel(
+		wireguardNamespace,
+		wireguardInterface,
+		localOuterIp,
+		localOuterPort,
+		localInnerIp,
+		localPrivateKey,
+	)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func UpdateWireguardTunnelPeers(wireguardNamespace string, wireguardInterface string, pl *PeerList) error {
 	klog.V(5).Info("Updating wireguard tunnels with peer list: ", *pl)
-	// delete all tunnels
-	//err := DeleteWireguardTunnel(wireguardNamespace, wireguardInterface)
-	//if err != nil {
-	//	klog.V(5).Info("Could not delete tunnel endpoint: ", err)
-	//}
-
-	tunnelExists, err := IsWireguardTunnel(wireguardNamespace, wireguardInterface)
-	if err != nil {
-		return err
-	}
-	if !tunnelExists {
-		// add new tunnels, for each peer
-		err = CreateWireguardTunnel(
-			wireguardNamespace,
-			wireguardInterface,
-			localOuterIp,
-			localOuterPort,
-			localInnerIp,
-			localPrivateKey,
-		)
-		if err != nil {
-			return err
-		}
-	}
-
-	err = SetWireguardTunnelPeers(wireguardNamespace, wireguardInterface, pl)
+	err := setWireguardTunnelPeers(wireguardNamespace, wireguardInterface, pl)
 	if err != nil {
 		return err
 	}
 
-	err = PruneWireguardTunnelPeers(wireguardNamespace, wireguardInterface, pl)
+	err = pruneWireguardTunnelPeers(wireguardNamespace, wireguardInterface, pl)
 	if err != nil {
 		return err
 	}
@@ -156,27 +158,7 @@ func UpdateWireguardTunnel(wireguardNamespace string, wireguardInterface string,
 	return nil
 }
 
-func CreateWireguardTunnel(wireguardNamespace string, wireguardInterface string, localOuterIp net.IP, localOuterPort int, localInnerIp net.IP, localPrivateKey string) error {
-	var cmds []string = []string{
-		"ip link add " + wireguardInterface + " type wireguard",
-		"wg set " + wireguardInterface + " private-key " + localPrivateKey + " listen-port " + strconv.Itoa(localOuterPort),
-		"ip link set dev " + wireguardInterface + " netns " + wireguardNamespace,
-
-		"ip netns exec " + wireguardNamespace + " ip link set dev " + wireguardInterface + " up",
-		"ip netns exec " + wireguardNamespace + " ip address add dev " + wireguardInterface + " " + localInnerIp.String() + "/24",
-	}
-
-	for _, cmd := range cmds {
-		klog.V(5).Info("Running command: ", cmd)
-		out, err := exec.Command("bash", "-c", cmd).CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("Error in CreateWireguardTunnel: %v (%s) (%s)", err, cmd, out)
-		}
-	}
-	return nil
-}
-
-func SetWireguardTunnelPeers(wireguardNamespace string, wireguardInterface string, pl *PeerList) error {
+func setWireguardTunnelPeers(wireguardNamespace string, wireguardInterface string, pl *PeerList) error {
 	var err error
 	for _, p := range *pl {
 		cmd := "ip netns exec " + wireguardNamespace + " wg set " + wireguardInterface + " peer " + p.PeerPublicKey + " allowed-ips " + p.PeerInnerIp.String() + " endpoint " + p.PeerOuterIp.String() + ":" + strconv.Itoa(p.PeerOuterPort)
@@ -189,7 +171,7 @@ func SetWireguardTunnelPeers(wireguardNamespace string, wireguardInterface strin
 	return nil
 }
 
-func PruneWireguardTunnelPeers(wireguardNamespace, wireguardInterface string, pl *PeerList) error {
+func pruneWireguardTunnelPeers(wireguardNamespace, wireguardInterface string, pl *PeerList) error {
 	var err error
 	var configuredPeers []string
 
@@ -231,7 +213,27 @@ func pruneWireguardTunnelPeer(wireguardNamespace, wireguardInterface, peerPublic
 	return nil
 }
 
-func DeleteWireguardTunnel(wireguardNamespace string, interfaceName string) error {
+func createWireguardTunnel(wireguardNamespace string, wireguardInterface string, localOuterIp net.IP, localOuterPort int, localInnerIp net.IP, localPrivateKey string) error {
+	var cmds []string = []string{
+		"ip link add " + wireguardInterface + " type wireguard",
+		"wg set " + wireguardInterface + " private-key " + localPrivateKey + " listen-port " + strconv.Itoa(localOuterPort),
+		"ip link set dev " + wireguardInterface + " netns " + wireguardNamespace,
+
+		"ip netns exec " + wireguardNamespace + " ip link set dev " + wireguardInterface + " up",
+		"ip netns exec " + wireguardNamespace + " ip address add dev " + wireguardInterface + " " + localInnerIp.String() + "/24",
+	}
+
+	for _, cmd := range cmds {
+		klog.V(5).Info("Running command: ", cmd)
+		out, err := exec.Command("bash", "-c", cmd).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("Error in CreateWireguardTunnel: %v (%s) (%s)", err, cmd, out)
+		}
+	}
+	return nil
+}
+
+func deleteWireguardTunnel(wireguardNamespace string, interfaceName string) error {
 	cmd := "ip netns exec " + wireguardNamespace + " ip link del " + interfaceName
 	klog.V(5).Info("Running command: ", cmd)
 	err := exec.Command("bash", "-c", cmd).Run()
@@ -241,7 +243,7 @@ func DeleteWireguardTunnel(wireguardNamespace string, interfaceName string) erro
 	return nil
 }
 
-func IsWireguardTunnel(wireguardNamespace, wireguardInterface string) (bool, error) {
+func isWireguardTunnel(wireguardNamespace, wireguardInterface string) (bool, error) {
 	cmd := "ip netns exec " + wireguardNamespace + " ip -o a | awk '$2 ~ /^" + wireguardInterface + "$/ {print $2}'"
 	klog.V(5).Info("Running command: ", cmd)
 	out, err := exec.Command("bash", "-c", cmd).Output()

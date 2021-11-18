@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log"
+	"net"
 	"os"
 	"strings"
 
@@ -22,7 +23,9 @@ var kubeconfig = flag.String("kubeconfig", "", "Location of kubeconfig file")
 var wireguardPrivateKey = flag.String("wg-private-key", "/etc/wireguard/private", "Location of the wireguard private key")
 var wireguardPublicKey = flag.String("wg-public-key", "/etc/wireguard/public", "Location of the wireguard public key")
 var wireguardNamespace = flag.String("wg-namespace", "wireguard-kubernetes", "Name of the wireguard-kubernetes namespace")
+var wireguardInterface = flag.String("wg-interface", "wg0", "Name of the interface inside the wireguard-kubernetes namespace")
 var hostname = flag.String("hostname", func() string { s, _ := os.Hostname(); return s }(), "Hostname of this system")
+var internalRoutingCidr = flag.String("internal-routing-cidr", "100.64.0.0/16", "Internal routing network used for the wireguard tunnels")
 
 // var sockaddr = flag.String("sockaddr", "/var/run/wgk8s/wgk8s.sock", "Location wgk8s socket (for CNI communication)")
 
@@ -31,6 +34,15 @@ func main() {
 	defer klog.Flush()
 
 	flag.Parse()
+
+	// convert internal routing cidr to network
+	_, internalRoutingNet, err := net.ParseCIDR(*internalRoutingCidr)
+	if err != nil {
+		log.Fatal("Cannot parse internal routing cidr: ", err)
+	}
+	if internalRoutingNet.Mask.String() != "ffff0000" {
+		log.Fatalf("Invalid mask, must be ffff0000 (16 hex), got: %s", internalRoutingNet.Mask.String())
+	}
 
 	// set up kubernetes client
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
@@ -42,16 +54,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// set up minimum infrastructure
-	if err := wireguard.EnsureWireguardKeys(*wireguardPrivateKey, *wireguardPublicKey); err != nil {
-		log.Fatal(err)
-	}
-	if err := wireguard.EnsureNamespace(*wireguardNamespace); err != nil {
-		log.Fatal(err)
-	}
-
-	localPrivateKey := "/etc/wireguard/private"
-
+	// read public key
 	pubKey, err := os.ReadFile(*wireguardPublicKey)
 	localPublicKey := strings.TrimSuffix(string(pubKey), "\n")
 	if localPublicKey == "" {
@@ -74,14 +77,30 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	localInnerIp := utils.GetInnerToOuterIp(localOuterIp, *internalRoutingNet)
 
-	// Create a list of peers of this node.
-	peerList := wireguard.NewPeerList()
+	// set up minimum infrastructure
+	if err := wireguard.EnsureWireguardKeys(*wireguardPrivateKey, *wireguardPublicKey); err != nil {
+		log.Fatal(err)
+	}
+	if err := wireguard.EnsureNamespace(*wireguardNamespace); err != nil {
+		log.Fatal(err)
+	}
+	err = wireguard.InitWireguardTunnel(
+		*wireguardNamespace,
+		*wireguardInterface,
+		localOuterIp,
+		10000,
+		localInnerIp,
+		*wireguardPrivateKey)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	// monitor nodes
+	// Create a list of peers of this node.
+	peerList := wireguard.NewPeerList()
 	nodesWatcher, _ := clientset.CoreV1().Nodes().Watch(context.TODO(), metav1.ListOptions{})
-
-	// add a watcher for all nodes
 	for {
 		select {
 		case event := <-nodesWatcher.ResultChan():
@@ -106,18 +125,19 @@ func main() {
 
 				if event.Type == watch.Added || event.Type == watch.Modified {
 					klog.V(5).Info("Peer node added or updated: ", peerHostname)
+					peerInnerIp := utils.GetInnerToOuterIp(peerOuterIp, *internalRoutingNet)
 					err = peerList.UpdateOrAdd(&wireguard.Peer{
 						LocalHostname:      localHostname,
 						PeerHostname:       peerHostname,
 						LocalOuterIp:       localOuterIp,
-						LocalInnerIp:       utils.GetInnerToOuterIp(localOuterIp),
+						LocalInnerIp:       localInnerIp,
 						PeerOuterIp:        peerOuterIp,
-						PeerInnerIp:        utils.GetInnerToOuterIp(peerOuterIp),
+						PeerInnerIp:        peerInnerIp,
 						PeerPublicKey:      peerPublicKey,
-						LocalPrivateKey:    string(localPrivateKey),
+						LocalPrivateKey:    *wireguardPrivateKey,
 						LocalOuterPort:     10000,
 						PeerOuterPort:      10000,
-						LocalInterfaceName: "wg0",
+						LocalInterfaceName: *wireguardInterface,
 					})
 				} else {
 					klog.V(5).Info("Peer node deleted: ", peerHostname)
@@ -127,13 +147,9 @@ func main() {
 					log.Fatal(err)
 				}
 
-				err = wireguard.UpdateWireguardTunnel(
+				err = wireguard.UpdateWireguardTunnelPeers(
 					*wireguardNamespace,
-					"wg0",
-					localOuterIp,
-					10000,
-					utils.GetInnerToOuterIp(localOuterIp),
-					string(localPrivateKey),
+					*wireguardInterface,
 					peerList)
 
 				if err != nil {

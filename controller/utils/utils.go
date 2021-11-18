@@ -51,6 +51,12 @@ func GetNodeInternalIp(node *corev1.Node) (net.IP, error) {
 	return nil, fmt.Errorf("Could not determine node internal IP for node %v", *node)
 }
 
-func GetInnerToOuterIp(outerIp net.IP) net.IP {
-	return net.IPv4(10, 0, 0, outerIp[len(outerIp)-1])
+// TODO: overly simplistic, only works with a /16 machine network at the moment and only IPv4
+func GetInnerToOuterIp(outerIp net.IP, internalRoutingNet net.IPNet) net.IP {
+	return net.IPv4(
+		internalRoutingNet.IP[len(internalRoutingNet.IP)-4],
+		internalRoutingNet.IP[len(internalRoutingNet.IP)-3],
+		outerIp[len(outerIp)-2],
+		outerIp[len(outerIp)-1],
+	)
 }
