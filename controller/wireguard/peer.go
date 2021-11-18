@@ -46,7 +46,7 @@ func (pl *PeerList) UpdateOrAdd(p *Peer) error {
 	if p.LocalHostname == "" {
 		return fmt.Errorf("Must provide a valid LocalHostname")
 	}
-	(*pl)[p.LocalHostname] = p
+	(*pl)[p.PeerHostname] = p
 
 	return nil
 }

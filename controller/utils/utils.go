@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/klog"
 )
 
 // PrepareSocketPath prepares the directory for the socket by creating the directory
@@ -63,24 +64,27 @@ func EnsureWireguardKeys(wireguardPrivateKey, wireguardPublicKey string) error {
 
 	}
 	if !IsFile(wireguardPrivateKey) {
-		out, err := exec.Command("wg", "genkey").Output()
+		cmd := "wg genkey"
+		out, err := exec.Command("/bin/bash", "-c", cmd).Output()
+		klog.V(5).Info("Running command: ", cmd)
 		if err != nil {
-			return fmt.Errorf("Error in AssureWireguardKeys: %v", err)
+			return fmt.Errorf("Error in EnsureWireguardKeys: %v", err)
 		}
 		err = os.WriteFile(wireguardPrivateKey, out, 0660)
 		if err != nil {
-			return fmt.Errorf("Error in AssureWireguardKeys: %v", err)
+			return fmt.Errorf("Error in EnsureWireguardKeys: %v", err)
 		}
 	}
 	if !IsFile(wireguardPublicKey) {
 		cmd := "cat " + wireguardPrivateKey + " | " + "wg pubkey"
+		klog.V(5).Info("Running command: ", cmd)
 		out, err := exec.Command("bash", "-c", cmd).Output()
 		if err != nil {
-			return fmt.Errorf("Error in AssureWireguardKeys: %v", err)
+			return fmt.Errorf("Error in EnsureWireguardKeys: %v", err)
 		}
 		err = os.WriteFile(wireguardPublicKey, out, 0660)
 		if err != nil {
-			return fmt.Errorf("Error in AssureWireguardKeys: %v", err)
+			return fmt.Errorf("Error in EnsureWireguardKeys: %v", err)
 		}
 	}
 
@@ -88,25 +92,33 @@ func EnsureWireguardKeys(wireguardPrivateKey, wireguardPublicKey string) error {
 }
 
 func EnsureNamespace(wireguardNamespace string) error {
-	out, err := exec.Command("ip", "netns").Output()
+	cmd := "ip netns"
+	klog.V(5).Info("Running command: ", cmd)
+	out, err := exec.Command("/bin/bash", "-c", cmd).Output()
 	if err != nil {
-		return fmt.Errorf("Error in AssureNamespace: %v", err)
+		return fmt.Errorf("Error in EnsureNamespace: %v", err)
 	}
 	s := bufio.NewScanner(bytes.NewReader(out))
 	for s.Scan() {
-		if s.Text() == wireguardNamespace {
+		line := s.Text()
+		fields := strings.Fields(line)
+		if fields[0] == wireguardNamespace {
 			return nil
 		}
 	}
 
-	err = exec.Command("ip", "netns", "add", wireguardNamespace).Run()
+	cmd = "ip netns add " + wireguardNamespace
+	klog.V(5).Info("Running command: ", cmd)
+	err = exec.Command("/bin/bash", "-c", cmd).Run()
 	if err != nil {
-		return fmt.Errorf("Error in AssureNamespace: %v", err)
+		return fmt.Errorf("Error in EnsureNamespace: %v", err)
 	}
 
-	err = exec.Command("/bin/bash", "-c", "ip netns exec "+wireguardNamespace+" ip link set dev lo up").Run()
+	cmd = "ip netns exec " + wireguardNamespace + " ip link set dev lo up"
+	klog.V(5).Info("Running command: ", cmd)
+	err = exec.Command("/bin/bash", "-c", cmd).Run()
 	if err != nil {
-		return fmt.Errorf("Error in AssureNamespace: %v", err)
+		return fmt.Errorf("Error in EnsureNamespace: %v", err)
 	}
 
 	return nil
@@ -138,27 +150,38 @@ func AddPublicKeyLabel(c *kubernetes.Clientset, hostName, pubKey string) error {
 }
 
 func UpdateWireguardTunnel(wireguardNamespace string, wireguardInterface string, localOuterIp net.IP, localOuterPort int, localInnerIp net.IP, localPrivateKey string, pl *wireguard.PeerList) error {
+	klog.V(5).Info("Updating wireguard tunnels with peer list: ", *pl)
 	// delete all tunnels
-	err := DeleteWireguardTunnel(wireguardNamespace, wireguardInterface)
+	//err := DeleteWireguardTunnel(wireguardNamespace, wireguardInterface)
+	//if err != nil {
+	//	klog.V(5).Info("Could not delete tunnel endpoint: ", err)
+	//}
+
+	tunnelExists, err := IsWireguardTunnel(wireguardNamespace, wireguardInterface)
 	if err != nil {
-		// todo
-		fmt.Println(err)
+		return err
+	}
+	if !tunnelExists {
+		// add new tunnels, for each peer
+		err = CreateWireguardTunnel(
+			wireguardNamespace,
+			wireguardInterface,
+			localOuterIp,
+			localOuterPort,
+			localInnerIp,
+			localPrivateKey,
+		)
+		if err != nil {
+			return err
+		}
 	}
 
-	// add new tunnels, for each peer
-	err = CreateWireguardTunnel(
-		wireguardNamespace,
-		wireguardInterface,
-		localOuterIp,
-		localOuterPort,
-		localInnerIp,
-		localPrivateKey,
-	)
+	err = SetWireguardTunnelPeers(wireguardNamespace, wireguardInterface, pl)
 	if err != nil {
 		return err
 	}
 
-	err = SetWireguardTunnelPeers(wireguardNamespace, wireguardInterface, pl)
+	err = PruneWireguardTunnelPeers(wireguardNamespace, wireguardInterface, pl)
 	if err != nil {
 		return err
 	}
@@ -177,6 +200,7 @@ func CreateWireguardTunnel(wireguardNamespace string, wireguardInterface string,
 	}
 
 	for _, cmd := range cmds {
+		klog.V(5).Info("Running command: ", cmd)
 		out, err := exec.Command("bash", "-c", cmd).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("Error in CreateWireguardTunnel: %v (%s) (%s)", err, cmd, out)
@@ -188,10 +212,9 @@ func CreateWireguardTunnel(wireguardNamespace string, wireguardInterface string,
 func SetWireguardTunnelPeers(wireguardNamespace string, wireguardInterface string, pl *wireguard.PeerList) error {
 	var err error
 	for _, p := range *pl {
-		fmt.Println("setting tunnel peer for %v", p)
 		cmd := "ip netns exec " + wireguardNamespace + " wg set " + wireguardInterface + " peer " + p.PeerPublicKey + " allowed-ips " + p.PeerInnerIp.String() + " endpoint " + p.PeerOuterIp.String() + ":" + strconv.Itoa(p.PeerOuterPort)
+		klog.V(5).Info("Running command: ", cmd)
 		err = exec.Command("bash", "-c", cmd).Run()
-		fmt.Println(cmd)
 		if err != nil {
 			return fmt.Errorf("Error in CreateWireguardTunnel: %v (%s)", err, cmd)
 		}
@@ -199,26 +222,71 @@ func SetWireguardTunnelPeers(wireguardNamespace string, wireguardInterface strin
 	return nil
 }
 
+func PruneWireguardTunnelPeers(wireguardNamespace, wireguardInterface string, pl *wireguard.PeerList) error {
+	var err error
+	var configuredPeers []string
+
+	cmd := "ip netns exec " + wireguardNamespace + " wg show " + wireguardInterface + " | awk '/^peer/ {print $2}'"
+	klog.V(5).Info("Running command: ", cmd)
+	out, err := exec.Command("bash", "-c", cmd).Output()
+	if err != nil {
+		return fmt.Errorf("Error in PruneWireguardTunnelPeers: %v (%s)", err, cmd)
+	}
+	s := bufio.NewScanner(bytes.NewReader(out))
+	for s.Scan() {
+		configuredPeers = append(configuredPeers, s.Text())
+	}
+	for _, cp := range configuredPeers {
+		found := false
+		for _, p := range *pl {
+			if p.PeerPublicKey == cp {
+				found = true
+				break
+			}
+		}
+		if !found {
+			err := pruneWireguardTunnelPeer(wireguardNamespace, wireguardInterface, cp)
+			if err != nil {
+				klog.V(1).Info("Could not prune peer ", cp, ": ", err)
+			}
+		}
+	}
+	return nil
+}
+
+func pruneWireguardTunnelPeer(wireguardNamespace, wireguardInterface, peerPublicKey string) error {
+	cmd := "ip netns exec " + wireguardNamespace + " wg set " + wireguardInterface + " peer " + peerPublicKey + " remove"
+	klog.V(5).Info("Running command: ", cmd)
+	err := exec.Command("bash", "-c", cmd).Run()
+	if err != nil {
+		return fmt.Errorf("Error in pruneWireguardTunnelPeer: %v (%s)", err, cmd)
+	}
+	return nil
+}
+
 func DeleteWireguardTunnel(wireguardNamespace string, interfaceName string) error {
-	err := exec.Command("bash", "-c", "ip netns exec "+wireguardNamespace+" ip link del "+interfaceName).Run()
+	cmd := "ip netns exec " + wireguardNamespace + " ip link del " + interfaceName
+	klog.V(5).Info("Running command: ", cmd)
+	err := exec.Command("bash", "-c", cmd).Run()
 	if err != nil {
 		return fmt.Errorf("Error in DeleteWireguardTunnel: %v", err)
 	}
 	return nil
 }
 
-func ListWireguardTunnels(wireguardNamespace string) ([]string, error) {
-	var interfaces []string
-
-	out, err := exec.Command("bash", "-c", "ip netns exec "+wireguardNamespace+" ip -o a | awk '$2 ~ /^wg/ {print $2}'").Output()
+func IsWireguardTunnel(wireguardNamespace, wireguardInterface string) (bool, error) {
+	cmd := "ip netns exec " + wireguardNamespace + " ip -o a | awk '$2 ~ /^" + wireguardInterface + "$/ {print $2}'"
+	klog.V(5).Info("Running command: ", cmd)
+	out, err := exec.Command("bash", "-c", cmd).Output()
 	if err != nil {
-		return nil, fmt.Errorf("Error in ListWireguardTunnels: %v", err)
+		return false, fmt.Errorf("Error in ListWireguardTunnels: %v", err)
 	}
 	s := bufio.NewScanner(bytes.NewReader(out))
 	for s.Scan() {
-		interfaces = append(interfaces, s.Text())
+		text := s.Text()
+		return text == wireguardInterface, nil
 	}
-	return interfaces, nil
+	return false, nil
 }
 
 func GetNodeInternalIp(node *corev1.Node) (net.IP, error) {

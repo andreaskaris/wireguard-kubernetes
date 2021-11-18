@@ -50,12 +50,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// read the local public and private key
-	/*privKey, err := os.ReadFile(*wireguardPrivateKey)
-	localPrivateKey := strings.TrimSuffix(string(privKey), "\n")
-	if localPrivateKey == "" {
-		log.Fatal("Cannot read privkey:", err)
-	}*/
 	localPrivateKey := "/etc/wireguard/private"
 
 	pubKey, err := os.ReadFile(*wireguardPublicKey)
@@ -111,7 +105,7 @@ func main() {
 				}
 
 				if event.Type == watch.Added || event.Type == watch.Modified {
-					klog.V(5).Info("Node added or updated")
+					klog.V(5).Info("Peer node added or updated: ", peerHostname)
 					err = peerList.UpdateOrAdd(&wireguard.Peer{
 						LocalHostname:      localHostname,
 						PeerHostname:       peerHostname,
@@ -126,7 +120,7 @@ func main() {
 						LocalInterfaceName: "wg0",
 					})
 				} else {
-					klog.V(1).Info("Node deleted")
+					klog.V(5).Info("Peer node deleted: ", peerHostname)
 					err = peerList.Delete(peerHostname)
 				}
 				if err != nil {
@@ -148,24 +142,4 @@ func main() {
 			}
 		}
 	}
-	//}(peerList)
-
-	/*
-		// Create socket directory if it does not yet exist.
-		utils.PrepareSocketPath(*sockaddr)
-
-		// Listen on the Linux socket
-		ln, err := net.Listen("unix", *sockaddr)
-		if err != nil {
-			log.Fatalf("Cannot listen on unix socket %s: %s", *sockaddr, err.Error())
-		}
-
-		rpc.Register(peerList)
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				log.Fatalf("Cannot accept connection: %s", err.Error())
-			}
-			go rpc.ServeConn(conn)
-		}*/
 }
