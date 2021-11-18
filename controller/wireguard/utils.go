@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"path"
 	"strconv"
 	"strings"
@@ -32,10 +31,9 @@ func EnsureWireguardKeys(wireguardPrivateKey, wireguardPublicKey string) error {
 	}
 	if !utils.IsFile(wireguardPrivateKey) {
 		cmd := "wg genkey"
-		out, err := exec.Command("/bin/bash", "-c", cmd).Output()
-		klog.V(5).Info("Running command: ", cmd)
+		out, err := utils.RunCommandWithOutput(cmd, "EnsureWireguardKeys")
 		if err != nil {
-			return fmt.Errorf("Error in EnsureWireguardKeys: %v", err)
+			return err
 		}
 		err = os.WriteFile(wireguardPrivateKey, out, 0660)
 		if err != nil {
@@ -44,10 +42,9 @@ func EnsureWireguardKeys(wireguardPrivateKey, wireguardPublicKey string) error {
 	}
 	if !utils.IsFile(wireguardPublicKey) {
 		cmd := "cat " + wireguardPrivateKey + " | " + "wg pubkey"
-		klog.V(5).Info("Running command: ", cmd)
-		out, err := exec.Command("bash", "-c", cmd).Output()
+		out, err := utils.RunCommandWithOutput(cmd, "EnsureWireguardKeys")
 		if err != nil {
-			return fmt.Errorf("Error in EnsureWireguardKeys: %v", err)
+			return err
 		}
 		err = os.WriteFile(wireguardPublicKey, out, 0660)
 		if err != nil {
@@ -60,10 +57,9 @@ func EnsureWireguardKeys(wireguardPrivateKey, wireguardPublicKey string) error {
 
 func EnsureNamespace(wireguardNamespace string) error {
 	cmd := "ip netns"
-	klog.V(5).Info("Running command: ", cmd)
-	out, err := exec.Command("/bin/bash", "-c", cmd).Output()
+	out, err := utils.RunCommandWithOutput(cmd, "EnsureNamespace")
 	if err != nil {
-		return fmt.Errorf("Error in EnsureNamespace: %v", err)
+		return err
 	}
 	s := bufio.NewScanner(bytes.NewReader(out))
 	for s.Scan() {
@@ -75,17 +71,15 @@ func EnsureNamespace(wireguardNamespace string) error {
 	}
 
 	cmd = "ip netns add " + wireguardNamespace
-	klog.V(5).Info("Running command: ", cmd)
-	err = exec.Command("/bin/bash", "-c", cmd).Run()
+	err = utils.RunCommand(cmd, "EnsureNamespace")
 	if err != nil {
-		return fmt.Errorf("Error in EnsureNamespace: %v", err)
+		return err
 	}
 
 	cmd = "ip netns exec " + wireguardNamespace + " ip link set dev lo up"
-	klog.V(5).Info("Running command: ", cmd)
-	err = exec.Command("/bin/bash", "-c", cmd).Run()
+	err = utils.RunCommand(cmd, "EnsureNamespace")
 	if err != nil {
-		return fmt.Errorf("Error in EnsureNamespace: %v", err)
+		return err
 	}
 
 	return nil
@@ -155,17 +149,27 @@ func UpdateWireguardTunnelPeers(wireguardNamespace string, wireguardInterface st
 		return err
 	}
 
+	// todo
+	err = pruneWireguardTunnelPeerRoutes(wireguardNamespace, wireguardInterface, pl)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
 func setWireguardTunnelPeers(wireguardNamespace string, wireguardInterface string, pl *PeerList) error {
 	var err error
 	for _, p := range *pl {
-		cmd := "ip netns exec " + wireguardNamespace + " wg set " + wireguardInterface + " peer " + p.PeerPublicKey + " allowed-ips " + p.PeerInnerIp.String() + " endpoint " + p.PeerOuterIp.String() + ":" + strconv.Itoa(p.PeerOuterPort)
-		klog.V(5).Info("Running command: ", cmd)
-		err = exec.Command("bash", "-c", cmd).Run()
-		if err != nil {
-			return fmt.Errorf("Error in CreateWireguardTunnel: %v (%s)", err, cmd)
+		cmds := []string{
+			"ip netns exec " + wireguardNamespace + " wg set " + wireguardInterface + " peer " + p.PeerPublicKey + " allowed-ips " + p.PeerInnerIp.String() + " endpoint " + p.PeerOuterIp.String() + ":" + strconv.Itoa(p.PeerOuterPort),
+			"ip netns exec " + wireguardNamespace + " ip route add " + p.PeerPodSubnet + " via " + p.PeerInnerIp.String() + " dev " + wireguardInterface,
+		}
+		for _, cmd := range cmds {
+			err = utils.RunCommand(cmd, "setWireguardTunnelPeers")
+			if err != nil {
+				klog.V(1).Info(err)
+			}
 		}
 	}
 	return nil
@@ -173,44 +177,79 @@ func setWireguardTunnelPeers(wireguardNamespace string, wireguardInterface strin
 
 func pruneWireguardTunnelPeers(wireguardNamespace, wireguardInterface string, pl *PeerList) error {
 	var err error
-	var configuredPeers []string
+	var configuredPeerPublicKeys []string
 
 	cmd := "ip netns exec " + wireguardNamespace + " wg show " + wireguardInterface + " | awk '/^peer/ {print $2}'"
-	klog.V(5).Info("Running command: ", cmd)
-	out, err := exec.Command("bash", "-c", cmd).Output()
+	out, err := utils.RunCommandWithOutput(cmd, "pruneWireguardTunnelPeers")
 	if err != nil {
-		return fmt.Errorf("Error in PruneWireguardTunnelPeers: %v (%s)", err, cmd)
+		return err
 	}
 	s := bufio.NewScanner(bytes.NewReader(out))
 	for s.Scan() {
-		configuredPeers = append(configuredPeers, s.Text())
+		configuredPeerPublicKeys = append(configuredPeerPublicKeys, s.Text())
 	}
-	for _, cp := range configuredPeers {
+	for _, configuredPeerPublicKey := range configuredPeerPublicKeys {
 		found := false
 		for _, p := range *pl {
-			if p.PeerPublicKey == cp {
+			if p.PeerPublicKey == configuredPeerPublicKey {
 				found = true
 				break
 			}
 		}
 		if !found {
-			err := pruneWireguardTunnelPeer(wireguardNamespace, wireguardInterface, cp)
-			if err != nil {
-				klog.V(1).Info("Could not prune peer ", cp, ": ", err)
+			cmds := []string{
+				"ip netns exec " + wireguardNamespace + " wg set " + wireguardInterface + " peer " + configuredPeerPublicKey + " remove",
+			}
+			for _, cmd := range cmds {
+				err := utils.RunCommand(cmd, "pruneWireguardTunnelPeer")
+				if err != nil {
+					klog.V(1).Info("Could not prune peer ", configuredPeerPublicKey, ": ", err)
+					return err
+				}
 			}
 		}
 	}
 	return nil
 }
 
-func pruneWireguardTunnelPeer(wireguardNamespace, wireguardInterface, peerPublicKey string) error {
-	cmd := "ip netns exec " + wireguardNamespace + " wg set " + wireguardInterface + " peer " + peerPublicKey + " remove"
-	klog.V(5).Info("Running command: ", cmd)
-	err := exec.Command("bash", "-c", cmd).Run()
-	if err != nil {
-		return fmt.Errorf("Error in pruneWireguardTunnelPeer: %v (%s)", err, cmd)
-	}
+func pruneWireguardTunnelPeerRoutes(wireguardNamespace, wireguardInterface string, pl *PeerList) error {
 	return nil
+	/*
+		var err error
+		var configuredPeerPublicKeys []string
+
+		cmd := "ip netns exec " + wireguardNamespace + " wg show " + wireguardInterface + " | awk '/^peer/ {print $2}'"
+		out, err := utils.RunCommandWithOutput(cmd, "pruneWireguardTunnelPeers")
+		if err != nil {
+			return err
+		}
+		s := bufio.NewScanner(bytes.NewReader(out))
+		for s.Scan() {
+			configuredPeerPublicKeys = append(configuredPeerPublicKeys, s.Text())
+		}
+		for _, configuredPeerPublicKey := range configuredPeerPublicKeys {
+			found := false
+			for _, p := range *pl {
+				if p.PeerPublicKey == configuredPeerPublicKey {
+					found = true
+					break
+				}
+			}
+			if !found {
+				cmds := []string{
+					"ip netns exec " + wireguardNamespace + " ip route delete " + configuredPeerPublicKey.PeerPodSubnet + " via " + configuredPeerPublicKey.PeerInnerIp + " dev " + wireguardInterface,
+				}
+				for _, cmd := range cmds {
+					err := utils.RunCommand(cmd, "pruneWireguardTunnelPeer")
+					if err != nil {
+						klog.V(1).Info("Could not prune peer ", configuredPeerPublicKey, ": ", err)
+						return err
+					}
+				}
+			}
+		}
+		return nil
+	*/
 }
 
 func createWireguardTunnel(wireguardNamespace string, wireguardInterface string, localOuterIp net.IP, localOuterPort int, localInnerIp net.IP, localPrivateKey string) error {
@@ -224,10 +263,9 @@ func createWireguardTunnel(wireguardNamespace string, wireguardInterface string,
 	}
 
 	for _, cmd := range cmds {
-		klog.V(5).Info("Running command: ", cmd)
-		out, err := exec.Command("bash", "-c", cmd).CombinedOutput()
+		err := utils.RunCommand(cmd, "createWireguardTunnel")
 		if err != nil {
-			return fmt.Errorf("Error in CreateWireguardTunnel: %v (%s) (%s)", err, cmd, out)
+			return err
 		}
 	}
 	return nil
@@ -235,20 +273,18 @@ func createWireguardTunnel(wireguardNamespace string, wireguardInterface string,
 
 func deleteWireguardTunnel(wireguardNamespace string, interfaceName string) error {
 	cmd := "ip netns exec " + wireguardNamespace + " ip link del " + interfaceName
-	klog.V(5).Info("Running command: ", cmd)
-	err := exec.Command("bash", "-c", cmd).Run()
+	err := utils.RunCommand(cmd, "deleteWireguardTunnel")
 	if err != nil {
-		return fmt.Errorf("Error in DeleteWireguardTunnel: %v", err)
+		return err
 	}
 	return nil
 }
 
 func isWireguardTunnel(wireguardNamespace, wireguardInterface string) (bool, error) {
 	cmd := "ip netns exec " + wireguardNamespace + " ip -o a | awk '$2 ~ /^" + wireguardInterface + "$/ {print $2}'"
-	klog.V(5).Info("Running command: ", cmd)
-	out, err := exec.Command("bash", "-c", cmd).Output()
+	out, err := utils.RunCommandWithOutput(cmd, "isWireguardTunnel")
 	if err != nil {
-		return false, fmt.Errorf("Error in ListWireguardTunnels: %v", err)
+		return false, err
 	}
 	s := bufio.NewScanner(bytes.NewReader(out))
 	for s.Scan() {

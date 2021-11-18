@@ -1,36 +1,29 @@
 package wireguard
 
 import (
-	"fmt"
 	"net"
 )
 
-const (
-	minPort = 10000
-	maxPort = 20000
-)
-
+// Peer is a structure representing a wireguard peer (the node on the other side of the tunnel).
 type Peer struct {
-	LocalHostname      string
-	PeerHostname       string
-	LocalInnerIp       net.IP // determine automatically, compare hostnames
-	PeerInnerIp        net.IP
-	LocalOuterIp       net.IP
-	PeerOuterIp        net.IP
-	PeerOuterPort      int
-	LocalOuterPort     int // determin automatically from range
-	PeerPublicKey      string
-	LocalPrivateKey    string
-	LocalInterfaceName string // wg + localOuterPort
+	PeerHostname  string
+	PeerInnerIp   net.IP
+	PeerOuterIp   net.IP
+	PeerOuterPort int
+	PeerPublicKey string
+	PeerPodSubnet string
 }
 
+// PeerList is a list of peers.
 type PeerList map[string]*Peer
 
+// NewPeerList returns a pointer to a new peer list.
 func NewPeerList() *PeerList {
 	pl := make(PeerList)
 	return &pl
 }
 
+// Get retrieves a peer entry.
 func (pl *PeerList) Get(peerName string) *Peer {
 	return (*pl)[peerName]
 }
@@ -41,11 +34,8 @@ func (pl *PeerList) Delete(hostname string) error {
 	return nil
 }
 
-// setKeys sets a Peer entry's keys.
+// UpdateOrAdd replaces the peer entry with a new peer entry.
 func (pl *PeerList) UpdateOrAdd(p *Peer) error {
-	if p.LocalHostname == "" {
-		return fmt.Errorf("Must provide a valid LocalHostname")
-	}
 	(*pl)[p.PeerHostname] = p
 
 	return nil
