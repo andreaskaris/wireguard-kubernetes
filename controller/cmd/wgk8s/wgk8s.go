@@ -43,10 +43,10 @@ func main() {
 	}
 
 	// set up minimum infrastructure
-	if err := utils.EnsureWireguardKeys(*wireguardPrivateKey, *wireguardPublicKey); err != nil {
+	if err := wireguard.EnsureWireguardKeys(*wireguardPrivateKey, *wireguardPublicKey); err != nil {
 		log.Fatal(err)
 	}
-	if err := utils.EnsureNamespace(*wireguardNamespace); err != nil {
+	if err := wireguard.EnsureNamespace(*wireguardNamespace); err != nil {
 		log.Fatal(err)
 	}
 
@@ -60,7 +60,7 @@ func main() {
 
 	// annotate the node which belongs to this process with the public key
 	klog.V(5).Info("Updating label of node: ", *hostname, " with public key: ", string(localPublicKey))
-	if err := utils.AddPublicKeyLabel(clientset, *hostname, string(localPublicKey)); err != nil {
+	if err := wireguard.AddPublicKeyLabel(clientset, *hostname, string(localPublicKey)); err != nil {
 		log.Fatal("Cannot add public key annotation to node:", err)
 	}
 
@@ -127,7 +127,7 @@ func main() {
 					log.Fatal(err)
 				}
 
-				err = utils.UpdateWireguardTunnel(
+				err = wireguard.UpdateWireguardTunnel(
 					*wireguardNamespace,
 					"wg0",
 					localOuterIp,
