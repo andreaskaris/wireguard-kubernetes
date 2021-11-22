@@ -21,7 +21,6 @@ func TestRun(t *testing.T) {
 	klog.InitFlags(nil)
         defer klog.Flush()
 	flag.Set("v", "10")
-
         flag.Parse()
 
 	// create the local node first
@@ -30,6 +29,7 @@ func TestRun(t *testing.T) {
 		fmt.Print(err.Error())
 	}
 
+	// run the application in a go routine
 	go Run(clientset,
                 "worker-0",
                 "100.64.0.0/16",
@@ -48,11 +48,11 @@ func TestRun(t *testing.T) {
 		fmt.Print(err.Error())
 	}
 	time.Sleep(5 * time.Second)
-	// now, add 2 worker nodes
 	_, err = clientset.CoreV1().Nodes().Create(context.TODO(), testdata.WorkerNode2, metav1.CreateOptions{})
 	if err != nil {
 		fmt.Print(err.Error())
 	}
 
+	// and sleep for another minute
 	time.Sleep(60 * time.Second)
 }
