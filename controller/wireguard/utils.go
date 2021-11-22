@@ -85,7 +85,7 @@ func EnsureNamespace(wireguardNamespace string) error {
 	return nil
 }
 
-func AddPublicKeyLabel(c *kubernetes.Clientset, hostName, pubKey string) error {
+func AddPublicKeyLabel(c kubernetes.Interface, hostName, pubKey string) error {
 	pubKey = strings.TrimSuffix(pubKey, "\n")
 	patch := []struct {
 		Op    string `json:"op"`
