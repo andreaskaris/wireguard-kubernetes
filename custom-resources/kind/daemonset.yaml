@@ -19,6 +19,11 @@ spec:
       tolerations:
       - key: node-role.kubernetes.io/master
         operator: Exists
+      # https://github.com/kubernetes/kubernetes/issues/45717
+      - key: node.kubernetes.io/network-unavailable
+        operator: Exists
+      - key: node.kubernetes.io/not-ready
+        operator: Exists
       initContainers:
       - name: wireguard-cni
         image: docker.io/library/wireguard-cni:latest
@@ -50,6 +55,7 @@ spec:
           mountPath: /etc/wireguard/
         - name: opt-cni-bin
           mountPath: /opt/cni/bin/
+        # https://rodolfo-alonso.com/network-namespaces-and-containers
         - name: run-netns
           mountPath: /run/netns
           mountPropagation: Bidirectional

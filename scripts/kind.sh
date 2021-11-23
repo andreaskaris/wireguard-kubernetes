@@ -21,7 +21,7 @@ write_cluster_config() {
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking:
-#  disableDefaultCNI: true
+  disableDefaultCNI: true
   apiServerAddress: 0.0.0.0
   apiServerPort: 9999
 nodes:
