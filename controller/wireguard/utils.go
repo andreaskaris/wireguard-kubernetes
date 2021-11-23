@@ -20,6 +20,8 @@ import (
 	"github.com/andreaskaris/wireguard-kubernetes/controller/utils"
 )
 
+// EnsureWireguardKeys creates a private key and public key for wireguard, if these keys do not yet exist.
+// If the directory (path.Dir) for the key(s) does not exist, this function will throw an error.
 func EnsureWireguardKeys(wireguardPrivateKey, wireguardPublicKey string) error {
 	if !utils.IsDir(path.Dir(wireguardPrivateKey)) {
 		return fmt.Errorf("Directory for private key %s does not exist", wireguardPrivateKey)
@@ -144,16 +146,72 @@ func DeleteNamespace(wireguardNamespace string) error {
 	return nil
 }
 
-func AddPublicKeyLabel(c kubernetes.Interface, hostName, pubKey string) error {
-	pubKey = strings.TrimSuffix(pubKey, "\n")
+// GetNodeTunnelInnerIp returns the IP address that's stored in annotation `wireguard.kubernetes.io/tunnel-ip`.
+/*func GetNodeTunnelInnerIp(clientset kubernetes.Interface, hostname string) (net.IP, error) {
+	node, err := clientset.CoreV1().Nodes().Get(context.TODO(), hostname, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	nodeAnnotations := node.GetAnnotations()
+	tunnelIp, ok := nodeAnnotations["wireguard.kubernetes.io/tunnel-ip"]
+	if ok {
+		return net.ParseIP(tunnelIp), nil
+	}
+	return nil, fmt.Errorf("Could not find annotation '%s' for node %s", "wireguard.kubernetes.io/tunnel-ip", hostname)
+}*/
+
+// NodeTunnelInnerIp will either return this node's IP tunnel IP address from the node annotation. Or,
+// in absence of such an annotation, it will create a new IP address inside the internalRoutingCidr, it will then
+// create the annotation and return the IP
+/*func NodeTunnelInnerIp(clientset kubernetes.Interface, localHostname, internalRoutingCidr string) (net.IP, error) {
+	tunnelIp, err := GetNodeTunnelInnerIp(clientset, localHostname)
+
+	if err == nil {
+		return tunnelIp, nil
+	}
+
+	nodes, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	usedTunnelIps := map[string]bool{}
+	for _, node := range nodes.Items {
+		nodeAnnotations := node.GetAnnotations()
+		tunnelIp, ok := nodeAnnotations["wireguard.kubernetes.io/tunnel-ip"]
+		if ok {
+			usedTunnelIps[tunnelIp] = true
+		}
+	}
+
+	// naive retry .. todo
+	for i := 0; i < 20; i++ {
+		randomIp, err := utils.RandomIpInSubnet(internalRoutingCidr)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := usedTunnelIps[randomIp.String()]; !ok {
+			err := PatchNodeAnnotation(clientset, localHostname, "wireguard.kubernetes.io/tunnel-ip", randomIp.String())
+			if err != nil {
+				return nil, err
+			}
+			return randomIp, nil
+		}
+	}
+
+	return nil, fmt.Errorf("Could not find an internal tunnel IP after 20 retries")
+}*/
+
+// PatchNodeAnnotation allows to set an annotation on a given node.
+func PatchNodeAnnotation(c kubernetes.Interface, hostName, label, value string) error {
 	patch := []struct {
 		Op    string `json:"op"`
 		Path  string `json:"path"`
 		Value string `json:"value"`
 	}{{
 		Op:    "replace",
-		Path:  "/metadata/annotations/wireguard.kubernetes.io~1publickey",
-		Value: pubKey,
+		Path:  "/metadata/annotations/" + strings.Replace(label, "/", "~1", -1),
+		Value: value,
 	}}
 	patchBytes, _ := json.Marshal(patch)
 	_, err := c.CoreV1().Nodes().Patch(
@@ -167,6 +225,12 @@ func AddPublicKeyLabel(c kubernetes.Interface, hostName, pubKey string) error {
 	}
 
 	return nil
+}
+
+// AddPublicKeyLabel is a wrapper around PatchNodeAnnotation. It adds the public key as an annotation to a host.
+func AddPublicKeyLabel(c kubernetes.Interface, hostName, pubKey string) error {
+	pubKey = strings.TrimSuffix(pubKey, "\n")
+	return PatchNodeAnnotation(c, hostName, "wireguard.kubernetes.io/publickey", pubKey)
 }
 
 func InitWireguardTunnel(wireguardNamespace string, wireguardInterface string, localOuterIp net.IP, localOuterPort int, localInnerIp net.IP, localPrivateKey string) error {

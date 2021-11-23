@@ -18,6 +18,7 @@ var masterNode0 = &corev1.Node{
 		},
 		Annotations: map[string]string{
 			"wireguard.kubernetes.io/publickey": "bDOPiAaYvtq1y+7+u75t1QYhogY4cuLo02jPhjNM+FA=",
+//			"wireguard.kubernetes.io/tunnel-ip": "100.64.0.101",
 		},
 	},
 	Spec: corev1.NodeSpec{
@@ -55,6 +56,7 @@ var masterNode1 = &corev1.Node{
 		},
 		Annotations: map[string]string{
 			"wireguard.kubernetes.io/publickey": "jQyD90Rm1xTj5YkYTrgUTc2AVgHqUbwFpvVUSCUV/Ao=",
+//			"wireguard.kubernetes.io/tunnel-ip": "100.64.0.102",
 		},
 	},
 	Spec: corev1.NodeSpec{
@@ -92,6 +94,7 @@ var masterNode2 = &corev1.Node{
 		},
 		Annotations: map[string]string{
 			"wireguard.kubernetes.io/publickey": "UOoRnP0Tn/MTFOo2ciOGQcudIqsHcN5UVevvmZ2k7TI=",
+//			"wireguard.kubernetes.io/tunnel-ip": "100.64.0.103",
 		},
 	},
 	Spec: corev1.NodeSpec{
@@ -129,6 +132,7 @@ var WorkerNode0 = &corev1.Node{
 		},
 		Annotations: map[string]string{
 			"wireguard.kubernetes.io/publickey": "qP+1Sstf6Y0MYBeUtJjWthBMfx8uG1hmK4mz9hOQjGI=",
+//			"wireguard.kubernetes.io/tunnel-ip": "100.64.0.104",
 		},
 	},
 	Spec: corev1.NodeSpec{
@@ -160,6 +164,7 @@ var WorkerNode1 = &corev1.Node{
 		},
 		Annotations: map[string]string{
 			"wireguard.kubernetes.io/publickey": "KmmEwqKHPxZIE2T1dRW51nj4V45W/0eIDibwEinlmQo=",
+//			"wireguard.kubernetes.io/tunnel-ip": "100.64.0.105",
 		},
 	},
 	Spec: corev1.NodeSpec{
@@ -191,6 +196,7 @@ var WorkerNode2 = &corev1.Node{
 		},
 		Annotations: map[string]string{
 			"wireguard.kubernetes.io/publickey": "dsrxnDAs1KBvvuGuTxi4cr2i/csK+fFCzaq4mX6Mfj0=",
+//			"wireguard.kubernetes.io/tunnel-ip": "100.64.0.106",
 		},
 	},
 	Spec: corev1.NodeSpec{
@@ -204,6 +210,38 @@ var WorkerNode2 = &corev1.Node{
 			corev1.NodeAddress{
 				Type:    corev1.NodeInternalIP,
 				Address: "172.18.0.105",
+			},
+		},
+	},
+}
+
+var WorkerNodeLocal = &corev1.Node{
+	TypeMeta: metav1.TypeMeta{
+		APIVersion: "v1",
+		Kind:       "Node",
+	},
+	ObjectMeta: metav1.ObjectMeta{
+		Name: "worker-local",
+		Labels: map[string]string{
+			"node-role.kubernetes.io/worker": "",
+			"kubernetes.io/hostname":         "worker-local",
+		},
+		Annotations: map[string]string{
+			"wireguard.kubernetes.io/publickey": "qP+1Sstf6Y0MYBeUtJjWthBMfx8uG1hmK4mz9hOQjGI=",
+//			"wireguard.kubernetes.io/tunnel-ip": "100.64.0.104",
+		},
+	},
+	Spec: corev1.NodeSpec{
+		PodCIDR: "10.245.6.0/24",
+		PodCIDRs: []string{
+			"10.245.6.0/24",
+		},
+	},
+	Status: corev1.NodeStatus{
+		Addresses: []corev1.NodeAddress{
+			corev1.NodeAddress{
+				Type:    corev1.NodeInternalIP,
+				Address: "172.18.0.106",
 			},
 		},
 	},

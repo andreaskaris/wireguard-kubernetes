@@ -25,7 +25,7 @@ func TestRun(t *testing.T) {
 	flag.Parse()
 
 	// create the local node first
-	_, err = clientset.CoreV1().Nodes().Create(context.TODO(), testdata.WorkerNode0, metav1.CreateOptions{})
+	_, err = clientset.CoreV1().Nodes().Create(context.TODO(), testdata.WorkerNodeLocal, metav1.CreateOptions{})
 	if err != nil {
 		fmt.Print(err.Error())
 	}
@@ -35,7 +35,7 @@ func TestRun(t *testing.T) {
 
 	// run the application in a go routine
 	go Run(clientset,
-		"worker-0",
+		"worker-local",
 		"100.64.0.0/16",
 		"/etc/wireguard/private",
 		"/etc/wireguard/public",
@@ -47,7 +47,12 @@ func TestRun(t *testing.T) {
 	// sleep for 5 seconds (that should be enough to bring up everything)
 	time.Sleep(5 * time.Second)
 
-	// now, add 2 worker nodes
+	// now, add 3 worker nodes
+	_, err = clientset.CoreV1().Nodes().Create(context.TODO(), testdata.WorkerNode0, metav1.CreateOptions{})
+	if err != nil {
+		fmt.Print(err.Error())
+	}
+	time.Sleep(5 * time.Second)
 	_, err = clientset.CoreV1().Nodes().Create(context.TODO(), testdata.WorkerNode1, metav1.CreateOptions{})
 	if err != nil {
 		fmt.Print(err.Error())

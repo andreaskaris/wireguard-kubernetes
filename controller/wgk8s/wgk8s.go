@@ -18,14 +18,22 @@ import (
 	"github.com/andreaskaris/wireguard-kubernetes/controller/wireguard"
 )
 
+// Run is responsible for running the wgk8s application. This application sets up the wireguard keys,
+// the wireguard namespace and tunnel connections, as well as the wireguard bridge interface.
+// The CNI plugin will use this infrastructure and plug in the veth endpoints into the wireguard bridge.
 func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wireguardPrivateKey, wireguardPublicKey,
 	wireguardNamespace, wireguardInterface, wireguardBridge string) {
 
 	// convert internal routing cidr to network
+	// the internal routing cidr is the subnet that is assigned to the tunnel interfaces
 	_, internalRoutingNet, err := net.ParseCIDR(internalRoutingCidr)
 	if err != nil {
 		log.Fatal("Cannot parse internal routing cidr: ", err)
 	}
+
+	// todo: at the moment, this is hardcoded to a 16 bit subnet mask
+	// this makes mapping of IP addresses easier (simply map the last 2 octets of the node outer IP
+	// to the internalRouting network)
 	if internalRoutingNet.Mask.String() != "ffff0000" {
 		log.Fatalf("Invalid mask, must be ffff0000 (16 hex), got: %s", internalRoutingNet.Mask.String())
 	}
@@ -48,7 +56,7 @@ func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wir
 		log.Fatal("Cannot add public key annotation to node:", err)
 	}
 
-	// get information about local localNode
+	// get information about local host
 	localNode, err := clientset.CoreV1().Nodes().Get(context.TODO(), localHostname, metav1.GetOptions{})
 	if err != nil {
 		log.Fatal("Cannot retrieve information about local node: ", err)
@@ -57,6 +65,7 @@ func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wir
 	if err != nil {
 		log.Fatal(err)
 	}
+	// this will either retrieve the annotated IP, or it will generate a new one if none exists, yet
 	localInnerIp := utils.GetInnerToOuterIp(localOuterIp, *internalRoutingNet)
 
 	// set up the local wireguard tunnel

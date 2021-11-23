@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"os"
 	"os/exec"
@@ -55,6 +56,7 @@ func GetNodeInternalIp(node *corev1.Node) (net.IP, error) {
 }
 
 // TODO: overly simplistic, only works with a /16 machine network at the moment and only IPv4
+// This also won't work with remote nodes with overlapping IP addresses
 func GetInnerToOuterIp(outerIp net.IP, internalRoutingNet net.IPNet) net.IP {
 	return net.IPv4(
 		internalRoutingNet.IP[len(internalRoutingNet.IP)-4],
@@ -62,6 +64,23 @@ func GetInnerToOuterIp(outerIp net.IP, internalRoutingNet net.IPNet) net.IP {
 		outerIp[len(outerIp)-2],
 		outerIp[len(outerIp)-1],
 	)
+}
+
+// todo - real random Ip generator
+func RandomIpInSubnet(cidr string) (net.IP, error) {
+	ip, _, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return nil, err
+	}
+
+	ip4 := ip.To4()
+
+	return net.IPv4(
+		ip4[0],
+		ip4[1],
+		ip4[2],
+		byte(rand.Intn(255)),
+	), nil
 }
 
 // GetPodCidr returns the IPv4 and/or IPv6 Cidr of a given node
