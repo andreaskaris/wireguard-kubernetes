@@ -2,6 +2,7 @@ package wgk8s
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -18,7 +19,7 @@ import (
 )
 
 func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wireguardPrivateKey, wireguardPublicKey,
-	wireguardNamespace, wireguardInterface string) {
+	wireguardNamespace, wireguardInterface, wireguardBridge string) {
 
 	// convert internal routing cidr to network
 	_, internalRoutingNet, err := net.ParseCIDR(internalRoutingCidr)
@@ -47,12 +48,12 @@ func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wir
 		log.Fatal("Cannot add public key annotation to node:", err)
 	}
 
-	// get information about local node
-	node, err := clientset.CoreV1().Nodes().Get(context.TODO(), localHostname, metav1.GetOptions{})
+	// get information about local localNode
+	localNode, err := clientset.CoreV1().Nodes().Get(context.TODO(), localHostname, metav1.GetOptions{})
 	if err != nil {
 		log.Fatal("Cannot retrieve information about local node: ", err)
 	}
-	localOuterIp, err := utils.GetNodeInternalIp(node)
+	localOuterIp, err := utils.GetNodeInternalIp(localNode)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -60,6 +61,14 @@ func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wir
 
 	// set up the local wireguard tunnel
 	if err := wireguard.EnsureNamespace(wireguardNamespace); err != nil {
+		log.Fatal(err)
+	}
+	bridgeIp, bridgeIpNetmask, err := utils.GetGateway(utils.GetPodCidr(localNode)["ipv4"])
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(bridgeIp, bridgeIpNetmask)
+	if err := wireguard.EnsureBridge(wireguardNamespace, wireguardBridge, bridgeIp, bridgeIpNetmask); err != nil {
 		log.Fatal(err)
 	}
 	err = wireguard.InitWireguardTunnel(

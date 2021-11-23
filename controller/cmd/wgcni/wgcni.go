@@ -33,6 +33,7 @@ import (
 
 const (
 	wireguardNamespace = "wireguard-kubernetes"
+	wireguardBridge    = "wgb0"
 )
 
 var (
@@ -90,12 +91,13 @@ func getInterfaceMac(namespace, interfaceName string) (string, error) {
 	return string(out), nil
 }
 
-func createVeth(podNamespace, podInterface, wireguardNamespace, wireguardInterface string) (*current.Interface, *current.Interface, error) {
+func createVeth(podNamespace, podInterface, wireguardNamespace, wireguardInterface, wireguardBridge string) (*current.Interface, *current.Interface, error) {
 	// todo - replace all of this with https://github.com/vishvananda/netlink
 	cmds := []string{
 		"ip netns exec " + podNamespace + " ip link add name " + podInterface + " type veth peer name " + wireguardInterface,
 		"ip netns exec " + podNamespace + " ip link set dev " + podInterface + " up",
 		"ip netns exec " + podNamespace + " ip link set dev " + wireguardInterface + " netns " + wireguardNamespace,
+		"ip netns exec " + wireguardNamespace + " ip link set dev " + wireguardInterface + " master " + wireguardBridge,
 		"ip netns exec " + wireguardNamespace + " ip link set dev " + wireguardInterface + " up",
 	}
 	for _, cmd := range cmds {
@@ -182,7 +184,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 	podNamespace := extractPodNamespace(args.Netns)
 	podInterface := args.IfName
 
-	hostInterface, containerInterface, err := createVeth(podNamespace, podInterface, wireguardNamespace, wireguardInterface)
+	hostInterface, containerInterface, err := createVeth(podNamespace, podInterface, wireguardNamespace, wireguardInterface, wireguardBridge)
 	if err != nil {
 		return err
 	}

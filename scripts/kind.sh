@@ -34,6 +34,10 @@ EOF
 }
 
 start_cluster() {
+	if $kind  get clusters | grep -q kind ; then
+		echo "Cluster 'kind' already exists. Run ./kind.sh --delete first."
+		exit 1
+	fi
 	kind create cluster --config $CLUSTER_CONFIG_FILE
 }
 

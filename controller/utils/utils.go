@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/klog"
@@ -85,6 +86,25 @@ func GetPodCidr(node *corev1.Node) map[string]string {
 		}
 	}
 	return ips
+}
+
+// todo - overly simplistic
+func GetGateway(cidr string) (string, string, error) {
+	s := strings.Split(cidr, "/")
+	if len(s) != 2 {
+		return "", "", fmt.Errorf("Cannot parse %s", cidr)
+	}
+	mask := s[1]
+
+	ip, _, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return "", "", err
+	}
+
+	nextIp := ip.To4()
+	nextIp[3]++
+
+	return nextIp.String(), mask, nil
 }
 
 var RunCommand = func(cmd string, methodName string) error {

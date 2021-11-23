@@ -17,6 +17,7 @@ var wireguardPrivateKey = flag.String("wg-private-key", "/etc/wireguard/private"
 var wireguardPublicKey = flag.String("wg-public-key", "/etc/wireguard/public", "Location of the wireguard public key")
 var wireguardNamespace = flag.String("wg-namespace", "wireguard-kubernetes", "Name of the wireguard-kubernetes namespace")
 var wireguardInterface = flag.String("wg-interface", "wg0", "Name of the interface inside the wireguard-kubernetes namespace")
+var wireguardBridge = flag.String("wg-bridge", "wgb0", "Name of the bridge inside the wireguard-kubernetes namespace")
 var hostname = flag.String("hostname", func() string { s, _ := os.Hostname(); return s }(), "Hostname of this system")
 var internalRoutingCidr = flag.String("internal-routing-cidr", "100.64.0.0/16", "Internal routing network used for the wireguard tunnels")
 
@@ -44,5 +45,6 @@ func main() {
 		*wireguardPublicKey,
 		*wireguardNamespace,
 		*wireguardInterface,
+		*wireguardBridge,
 	)
 }

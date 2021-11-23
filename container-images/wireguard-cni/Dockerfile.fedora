@@ -1,6 +1,12 @@
+FROM golang:1.16
+WORKDIR /build
+RUN git clone https://github.com/containernetworking/plugins plugins
+RUN cd plugins && ./build_linux.sh
+
 FROM registry.fedoraproject.org/fedora:35
 RUN yum install wireguard-tools iproute iputils -y
 # COPY wireguard-cni /wireguard-cni
 ADD bin/ /cni-bin
+COPY --from=0 /build/plugins/bin/host-local /cni-bin/.
 COPY entrypoint.sh /entrypoint.sh
 ENTRYPOINT [ "/entrypoint.sh" ]

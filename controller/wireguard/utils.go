@@ -55,6 +55,40 @@ func EnsureWireguardKeys(wireguardPrivateKey, wireguardPublicKey string) error {
 	return nil
 }
 
+// EnsureBridge creates the bridge which joins the pod veth endpoints to the overlay.
+// If the bridge exists already, it does nothing.
+func EnsureBridge(wireguardNamespace, bridgeName, bridgeIp, bridgeIpNetmask string) error {
+	cmd := "ip netns exec " + wireguardNamespace + " ip link ls type bridge"
+	out, err := utils.RunCommandWithOutput(cmd, "EnsureBridge")
+	if err != nil {
+		return err
+	}
+	s := bufio.NewScanner(bytes.NewReader(out))
+	for s.Scan() {
+		line := s.Text()
+		fields := strings.Fields(line)
+		if fields[1] == bridgeName+":" {
+			return nil
+		}
+	}
+
+	cmds := []string{
+		"ip netns exec " + wireguardNamespace + " ip link add  " + bridgeName + " type bridge",
+		"ip netns exec " + wireguardNamespace + " ip address add dev " + bridgeName + " " + bridgeIp + "/" + bridgeIpNetmask,
+		"ip netns exec " + wireguardNamespace + " ip link set dev " + bridgeName + " up",
+	}
+	for _, cmd := range cmds {
+		err := utils.RunCommand(cmd, "EnsureBridge")
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// EnsureNamespace creates a namespace with a given name only if the namespace does not exist yet.
+// Otherwise, it does nothing.
 func EnsureNamespace(wireguardNamespace string) error {
 	cmd := "ip netns"
 	out, err := utils.RunCommandWithOutput(cmd, "EnsureNamespace")
@@ -80,6 +114,31 @@ func EnsureNamespace(wireguardNamespace string) error {
 	err = utils.RunCommand(cmd, "EnsureNamespace")
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+// DeleteNamespace deletes a namespace with a given name if the namespace exists.
+// Otherwise, it does nothing.
+func DeleteNamespace(wireguardNamespace string) error {
+	cmd := "ip netns"
+	out, err := utils.RunCommandWithOutput(cmd, "DeleteNamespace")
+	if err != nil {
+		return err
+	}
+	s := bufio.NewScanner(bytes.NewReader(out))
+	for s.Scan() {
+		line := s.Text()
+		fields := strings.Fields(line)
+		if fields[0] == wireguardNamespace {
+			cmd = "ip netns del " + wireguardNamespace
+			err = utils.RunCommand(cmd, "DeleteNamespace")
+			if err != nil {
+				return err
+			}
+			return nil
+		}
 	}
 
 	return nil
@@ -144,6 +203,11 @@ func UpdateWireguardTunnelPeers(wireguardNamespace string, wireguardInterface st
 		return err
 	}
 
+	err = setWireguardTunnelPeerRoutes(wireguardNamespace, wireguardInterface, pl)
+	if err != nil {
+		return err
+	}
+
 	err = pruneWireguardTunnelPeers(wireguardNamespace, wireguardInterface, pl)
 	if err != nil {
 		return err
@@ -160,15 +224,22 @@ func UpdateWireguardTunnelPeers(wireguardNamespace string, wireguardInterface st
 func setWireguardTunnelPeers(wireguardNamespace string, wireguardInterface string, pl *PeerList) error {
 	var err error
 	for _, p := range *pl {
-		cmds := []string{
-			"ip netns exec " + wireguardNamespace + " wg set " + wireguardInterface + " peer " + p.PeerPublicKey + " allowed-ips " + p.PeerInnerIp.String() + " endpoint " + p.PeerOuterIp.String() + ":" + strconv.Itoa(p.PeerOuterPort),
-			"ip netns exec " + wireguardNamespace + " ip route add " + p.PeerPodSubnet + " via " + p.PeerInnerIp.String() + " dev " + wireguardInterface,
+		cmd := "ip netns exec " + wireguardNamespace + " wg set " + wireguardInterface + " peer " + p.PeerPublicKey + " allowed-ips " + p.PeerInnerIp.String() + " endpoint " + p.PeerOuterIp.String() + ":" + strconv.Itoa(p.PeerOuterPort)
+		err = utils.RunCommand(cmd, "setWireguardTunnelPeers")
+		if err != nil {
+			klog.V(1).Info(err)
 		}
-		for _, cmd := range cmds {
-			err = utils.RunCommand(cmd, "setWireguardTunnelPeers")
-			if err != nil {
-				klog.V(1).Info(err)
-			}
+	}
+	return nil
+}
+
+func setWireguardTunnelPeerRoutes(wireguardNamespace string, wireguardInterface string, pl *PeerList) error {
+	var err error
+	for _, p := range *pl {
+		cmd := "ip netns exec " + wireguardNamespace + " ip route add " + p.PeerPodSubnet + " via " + p.PeerInnerIp.String() + " dev " + wireguardInterface
+		err = utils.RunCommand(cmd, "setWireguardTunnelPeers")
+		if err != nil {
+			klog.V(1).Info(err)
 		}
 	}
 	return nil

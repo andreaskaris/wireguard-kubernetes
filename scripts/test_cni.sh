@@ -1,15 +1,19 @@
 #!/bin/bash
 
+DIR="$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+
 echo "Building cni plugins"
 git clone https://github.com/containernetworking/plugins /tmp/plugins
 pushd /tmp/plugins
 ./build_linux.sh
 popd
 
+pushd $DIR/../controller/cmd/wgcni
 go build -o /tmp/wgcni wgcni.go
 if [ "$?" != "0" ]; then
 	exit 1
 fi
+popd
 
 ip netns add fake-pod 2>/dev/null
 ip netns add wireguard-kubernetes 2>/dev/null
