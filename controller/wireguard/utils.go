@@ -224,7 +224,7 @@ func UpdateWireguardTunnelPeers(wireguardNamespace string, wireguardInterface st
 func setWireguardTunnelPeers(wireguardNamespace string, wireguardInterface string, pl *PeerList) error {
 	var err error
 	for _, p := range *pl {
-		cmd := "ip netns exec " + wireguardNamespace + " wg set " + wireguardInterface + " peer " + p.PeerPublicKey + " allowed-ips " + p.PeerInnerIp.String() + " endpoint " + p.PeerOuterIp.String() + ":" + strconv.Itoa(p.PeerOuterPort)
+		cmd := "ip netns exec " + wireguardNamespace + " wg set " + wireguardInterface + " peer " + p.PeerPublicKey + " allowed-ips " + p.PeerInnerIp.String() + "," + p.PeerPodSubnet + " endpoint " + p.PeerOuterIp.String() + ":" + strconv.Itoa(p.PeerOuterPort)
 		err = utils.RunCommand(cmd, "setWireguardTunnelPeers")
 		if err != nil {
 			klog.V(1).Info(err)
