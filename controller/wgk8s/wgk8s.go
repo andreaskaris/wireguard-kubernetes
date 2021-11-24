@@ -2,7 +2,6 @@ package wgk8s
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net"
 	"os"
@@ -34,6 +33,7 @@ func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wir
 	// todo: at the moment, this is hardcoded to a 16 bit subnet mask
 	// this makes mapping of IP addresses easier (simply map the last 2 octets of the node outer IP
 	// to the internalRouting network)
+	// That means that all nodes currently *must* be part of the same /16 machine network
 	if internalRoutingNet.Mask.String() != "ffff0000" {
 		log.Fatalf("Invalid mask, must be ffff0000 (16 hex), got: %s", internalRoutingNet.Mask.String())
 	}
@@ -61,25 +61,29 @@ func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wir
 	if err != nil {
 		log.Fatal("Cannot retrieve information about local node: ", err)
 	}
-	localOuterIp, err := utils.GetNodeInternalIp(localNode)
+	localOuterIp, err := utils.GetNodeMachineNetworkIp(localNode)
 	if err != nil {
 		log.Fatal(err)
 	}
-	// this will either retrieve the annotated IP, or it will generate a new one if none exists, yet
+	// retried the tunnel inner IP address of this node (currently 10.64.x.y where x.y are the last 2 octets from this node's node local IP)
 	localInnerIp := utils.GetInnerToOuterIp(localOuterIp, *internalRoutingNet)
 
 	// set up the local wireguard tunnel
 	if err := wireguard.EnsureNamespace(wireguardNamespace); err != nil {
 		log.Fatal(err)
 	}
-	bridgeIp, bridgeIpNetmask, err := utils.GetGateway(utils.GetPodCidr(localNode)["ipv4"])
+
+	// set brw0's IP address to the first IP address in the node's PodCIDR
+	podCidrs, _ := utils.GetPodCidr(localNode)
+	bridgeIp, bridgeIpNetmask, err := utils.GetFirstNetworkAddress(podCidrs["ipv4"])
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(bridgeIp, bridgeIpNetmask)
+	// Create the wgb0 bridge
 	if err := wireguard.EnsureBridge(wireguardNamespace, wireguardBridge, bridgeIp, bridgeIpNetmask); err != nil {
 		log.Fatal(err)
 	}
+	// Create the wg0 tunnel
 	err = wireguard.InitWireguardTunnel(
 		wireguardNamespace,
 		wireguardInterface,
@@ -98,19 +102,22 @@ func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wir
 	for {
 		select {
 		case event := <-nodesWatcher.ResultChan():
+			// every time a node is added, deleted or modified
 			if event.Type == watch.Added || event.Type == watch.Deleted || event.Type == watch.Modified {
 				// extract node from event
 				node := event.Object.(*corev1.Node)
 
 				// extract node name
 				peerHostname := node.Name
-				// extract node IPv4 Cidr
-				peerPodSubnet := utils.GetPodCidr(node)["ipv4"]
 
 				// skip this node event if the event is for the local node
 				if localHostname == peerHostname {
 					continue
 				}
+
+				// extract node IPv4 Cidr
+				podCidrs, _ := utils.GetPodCidr(node)
+				peerPodSubnet := podCidrs["ipv4"]
 
 				// extract public key node annotation
 				nodeAnnotations := node.GetAnnotations()
@@ -121,7 +128,7 @@ func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wir
 				}
 
 				// get the peer's IP address
-				peerOuterIp, err := utils.GetNodeInternalIp(node)
+				peerOuterIp, err := utils.GetNodeMachineNetworkIp(node)
 				if err != nil {
 					klog.V(1).Info(err.Error())
 					continue

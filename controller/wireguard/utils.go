@@ -233,6 +233,8 @@ func AddPublicKeyLabel(c kubernetes.Interface, hostName, pubKey string) error {
 	return PatchNodeAnnotation(c, hostName, "wireguard.kubernetes.io/publickey", pubKey)
 }
 
+// InitWireguardTunnel creates a new wireguard tunnel. It first deletes the existing tunnel, then it creates a new tunnel.
+// Todo: tunnel deletion is overly aggressive and whenever this process restarts, pod traffic would be interrupted.
 func InitWireguardTunnel(wireguardNamespace string, wireguardInterface string, localOuterIp net.IP, localOuterPort int, localInnerIp net.IP, localPrivateKey string) error {
 	tunnelExists, err := isWireguardTunnel(wireguardNamespace, wireguardInterface)
 	if err != nil {
@@ -260,6 +262,7 @@ func InitWireguardTunnel(wireguardNamespace string, wireguardInterface string, l
 	return nil
 }
 
+// UpdateWireguardTunnelPeers applied the contents of pl *PeerList to the wireguard tunnel. Dead routes and peers will be pruned.
 func UpdateWireguardTunnelPeers(wireguardNamespace string, wireguardInterface string, pl *PeerList) error {
 	klog.V(5).Info("Updating wireguard tunnels with peer list: ", *pl)
 	err := setWireguardTunnelPeers(wireguardNamespace, wireguardInterface, pl)

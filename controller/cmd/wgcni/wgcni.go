@@ -19,7 +19,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"strings"
 
 	"github.com/andreaskaris/wireguard-kubernetes/controller/utils"
 	"github.com/containernetworking/cni/pkg/skel"
@@ -36,27 +35,8 @@ const (
 	wireguardBridge    = "wgb0"
 )
 
-var (
-	podSubnet string
-)
-
 type NetConf struct {
 	types.NetConf
-}
-
-func main() {
-	flag.Parse()
-
-	skel.PluginMain(cmdAdd, cmdCheck, cmdDel, version.All, bv.BuildString("none"))
-}
-
-func loadNetConf(data []byte) (*NetConf, string, error) {
-	conf := &NetConf{}
-	if err := json.Unmarshal(data, &conf); err != nil {
-		return nil, "", fmt.Errorf("failed to parse")
-	}
-
-	return conf, conf.CNIVersion, nil
 }
 
 type EnvArgs struct {
@@ -66,110 +46,17 @@ type EnvArgs struct {
 	K8S_POD_INFRA_CONTAINER_ID types.UnmarshallableString `json:"k8s_pod_infra_container_id,omitempty"`
 }
 
-func loadArgs(args *skel.CmdArgs) (*EnvArgs, error) {
-	envArgs := EnvArgs{}
-	if err := types.LoadArgs(args.Args, &envArgs); err != nil {
-		return nil, err
-	}
-	return &envArgs, nil
+func main() {
+	flag.Parse()
+
+	skel.PluginMain(cmdAdd, cmdCheck, cmdDel, version.All, bv.BuildString("none"))
 }
 
-func generatePeerInterfaceName(containerId string) string {
-	return fmt.Sprintf("veth%s", containerId[:8])
-}
-
-func extractPodNamespace(fqns string) string {
-	return strings.TrimPrefix(fqns, "/var/run/netns/")
-}
-
-func getInterfaceMac(namespace, interfaceName string) (string, error) {
-	cmd := "ip netns exec " + namespace + " ip link ls dev " + interfaceName + "| awk '/link\\/ether/ {print $2}'"
-	out, err := utils.RunCommandWithOutput(cmd, "getInterfaceMac")
-	if err != nil {
-		return "", err
-	}
-	return string(out), nil
-}
-
-func createVeth(podNamespace, podInterface, wireguardNamespace, wireguardInterface, wireguardBridge string) (*current.Interface, *current.Interface, error) {
-	// todo - replace all of this with https://github.com/vishvananda/netlink
-	cmds := []string{
-		"ip netns exec " + podNamespace + " ip link add name " + podInterface + " type veth peer name " + wireguardInterface,
-		"ip netns exec " + podNamespace + " ip link set dev " + podInterface + " up",
-		"ip netns exec " + podNamespace + " ip link set dev " + wireguardInterface + " netns " + wireguardNamespace,
-		"ip netns exec " + wireguardNamespace + " ip link set dev " + wireguardInterface + " master " + wireguardBridge,
-		"ip netns exec " + wireguardNamespace + " ip link set dev " + wireguardInterface + " up",
-	}
-	for _, cmd := range cmds {
-		err := utils.RunCommand(cmd, "cmdAdd")
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-
-	wireguardInterfaceMac, err := getInterfaceMac(wireguardNamespace, wireguardInterface)
-	if err != nil {
-		return nil, nil, err
-	}
-	hostInterface := current.Interface{
-		Name:    wireguardInterface,
-		Mac:     wireguardInterfaceMac,
-		Sandbox: "/var/run/netns/" + wireguardNamespace,
-	}
-	containerInterfaceMac, err := getInterfaceMac(podNamespace, podInterface)
-	if err != nil {
-		return nil, nil, err
-	}
-	containerInterface := current.Interface{
-		Name:    podInterface,
-		Mac:     containerInterfaceMac,
-		Sandbox: "/var/run/netns" + podNamespace,
-	}
-	return &hostInterface, &containerInterface, nil
-}
-
-func deleteVeth(podNamespace, podInterface, wireguardNamespace, wireguardInterface string) error {
-	// todo - replace all of this with https://github.com/vishvananda/netlink
-	cmds := []string{
-		"ip netns exec " + podNamespace + " ip link del " + podInterface,
-	}
-	for _, cmd := range cmds {
-		err := utils.RunCommand(cmd, "cmdAdd")
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func addIpConfiguration(podNamespace, podInterface string, ips []*current.IPConfig, routes []*types.Route) error {
-	cmds := []string{}
-	for _, ip := range ips {
-		cmds = append(
-			cmds,
-			"ip netns exec "+podNamespace+" ip address add dev "+podInterface+" "+ip.Address.String(),
-		)
-
-		for _, route := range routes {
-			cmds = append(
-				cmds,
-				"ip netns exec "+podNamespace+" ip route add "+route.Dst.String()+" via "+ip.Gateway.String()+" dev "+podInterface,
-			)
-		}
-	}
-	for _, cmd := range cmds {
-		err := utils.RunCommand(cmd, "addIpConfiguration")
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
+// cmdAdd is run when action ADD is provided.
 func cmdAdd(args *skel.CmdArgs) error {
 	var success bool = false
 
+	// pass configuration into an NetConf object
 	netConf, _, err := loadNetConf(args.StdinData)
 	if err != nil {
 		return err
@@ -180,14 +67,19 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return fmt.Errorf("An IPAM plugin must be specified")
 	}
 
-	wireguardInterface := generatePeerInterfaceName(args.ContainerID)
-	podNamespace := extractPodNamespace(args.Netns)
+	// determine the veth name inside the wireguard-kubernetes namespace
+	wireguardInterface := utils.GenerateVethName(args.ContainerID)
+	// determine the pod's namespace and interface name
+	podNamespace := utils.GetNamespaceNameFromPath(args.Netns)
 	podInterface := args.IfName
 
+	// create the veth interface that joins the pod's network with bridge wgb0 inside wireguard-kubernetes
 	hostInterface, containerInterface, err := createVeth(podNamespace, podInterface, wireguardNamespace, wireguardInterface, wireguardBridge)
 	if err != nil {
 		return err
 	}
+
+	// start building the result object
 	result := &current.Result{
 		CNIVersion: current.ImplementedSpecVersion,
 		Interfaces: []*current.Interface{
@@ -197,6 +89,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 
 	// run the IPAM plugin and get back the config to apply
+	// we currently require that an IPAM plugin be configured
 	r, err := ipam.ExecAdd(netConf.IPAM.Type, args.StdinData)
 	if err != nil {
 		return err
@@ -222,6 +115,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return errors.New("IPAM plugin returned missing IP config")
 	}
 
+	// now that IPAM returned our IP addresses and routes, apply them
 	err = addIpConfiguration(podNamespace, podInterface, result.IPs, result.Routes)
 	if err != nil {
 		return err
@@ -244,8 +138,8 @@ func cmdDel(args *skel.CmdArgs) error {
 		return fmt.Errorf("An IPAM plugin must be specified")
 	}
 
-	wireguardInterface := generatePeerInterfaceName(args.ContainerID)
-	podNamespace := extractPodNamespace(args.Netns)
+	wireguardInterface := utils.GenerateVethName(args.ContainerID)
+	podNamespace := utils.GetNamespaceNameFromPath(args.Netns)
 	podInterface := args.IfName
 
 	err = deleteVeth(podNamespace, podInterface, wireguardNamespace, wireguardInterface)
@@ -259,5 +153,102 @@ func cmdDel(args *skel.CmdArgs) error {
 }
 
 func cmdCheck(args *skel.CmdArgs) error {
+	return nil
+}
+
+func loadNetConf(data []byte) (*NetConf, string, error) {
+	conf := &NetConf{}
+	if err := json.Unmarshal(data, &conf); err != nil {
+		return nil, "", fmt.Errorf("failed to parse")
+	}
+
+	return conf, conf.CNIVersion, nil
+}
+
+func loadArgs(args *skel.CmdArgs) (*EnvArgs, error) {
+	envArgs := EnvArgs{}
+	if err := types.LoadArgs(args.Args, &envArgs); err != nil {
+		return nil, err
+	}
+	return &envArgs, nil
+}
+
+// createVeth creates the veth pair for this pod, with one end inside the wireguard-kubernetes namespace, and the
+// other end inside the pod as eth0.
+func createVeth(podNamespace, podInterface, wireguardNamespace, wireguardInterface, wireguardBridge string) (*current.Interface, *current.Interface, error) {
+	// todo - replace all of this with https://github.com/vishvananda/netlink
+	cmds := []string{
+		"ip netns exec " + podNamespace + " ip link add name " + podInterface + " type veth peer name " + wireguardInterface,
+		"ip netns exec " + podNamespace + " ip link set dev " + podInterface + " up",
+		"ip netns exec " + podNamespace + " ip link set dev " + wireguardInterface + " netns " + wireguardNamespace,
+		"ip netns exec " + wireguardNamespace + " ip link set dev " + wireguardInterface + " master " + wireguardBridge,
+		"ip netns exec " + wireguardNamespace + " ip link set dev " + wireguardInterface + " up",
+	}
+	for _, cmd := range cmds {
+		err := utils.RunCommand(cmd, "cmdAdd")
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	wireguardInterfaceMac, err := utils.GetInterfaceMac(wireguardNamespace, wireguardInterface)
+	if err != nil {
+		return nil, nil, err
+	}
+	hostInterface := current.Interface{
+		Name:    wireguardInterface,
+		Mac:     wireguardInterfaceMac,
+		Sandbox: utils.GetPathFromNamespace(wireguardNamespace),
+	}
+	containerInterfaceMac, err := utils.GetInterfaceMac(podNamespace, podInterface)
+	if err != nil {
+		return nil, nil, err
+	}
+	containerInterface := current.Interface{
+		Name:    podInterface,
+		Mac:     containerInterfaceMac,
+		Sandbox: utils.GetPathFromNamespace(podNamespace),
+	}
+	return &hostInterface, &containerInterface, nil
+}
+
+// deleteVeth deletes the given veth pair (only one side must be deleted)
+func deleteVeth(podNamespace, podInterface, wireguardNamespace, wireguardInterface string) error {
+	// todo - replace all of this with https://github.com/vishvananda/netlink
+	cmds := []string{
+		"ip netns exec " + podNamespace + " ip link del " + podInterface,
+	}
+	for _, cmd := range cmds {
+		err := utils.RunCommand(cmd, "cmdAdd")
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// addIpConfiguration sets up this interface's IP address and routes for the pod.
+func addIpConfiguration(podNamespace, podInterface string, ips []*current.IPConfig, routes []*types.Route) error {
+	cmds := []string{}
+	for _, ip := range ips {
+		cmds = append(
+			cmds,
+			"ip netns exec "+podNamespace+" ip address add dev "+podInterface+" "+ip.Address.String(),
+		)
+
+		for _, route := range routes {
+			cmds = append(
+				cmds,
+				"ip netns exec "+podNamespace+" ip route add "+route.Dst.String()+" via "+ip.Gateway.String()+" dev "+podInterface,
+			)
+		}
+	}
+	for _, cmd := range cmds {
+		err := utils.RunCommand(cmd, "addIpConfiguration")
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
