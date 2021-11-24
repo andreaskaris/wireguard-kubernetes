@@ -1,6 +1,7 @@
 package wireguard
 
 import (
+	"fmt"
 	"net"
 )
 
@@ -24,8 +25,13 @@ func NewPeerList() *PeerList {
 }
 
 // Get retrieves a peer entry.
-func (pl *PeerList) Get(peerName string) *Peer {
-	return (*pl)[peerName]
+func (pl *PeerList) Get(peerName string) (*Peer, error) {
+	entry, ok := (*pl)[peerName]
+	if !ok {
+		return nil, fmt.Errorf("No such entry: %s", peerName)
+	} else {
+		return entry, nil
+	}
 }
 
 // Delete deletes the pod from the PeerList.

@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"net"
 	"os"
@@ -157,10 +159,18 @@ func GetPathFromNamespace(namespace string) string {
 
 // GetInterfaceMac returns an interface's MAC address.
 func GetInterfaceMac(namespace, interfaceName string) (string, error) {
-	cmd := "ip netns exec " + namespace + " ip link ls dev " + interfaceName + "| awk '/link\\/ether/ {print $2}'"
+	cmd := "ip netns exec " + namespace + " ip link ls dev " + interfaceName
 	out, err := RunCommandWithOutput(cmd, "GetInterfaceMac")
 	if err != nil {
 		return "", err
 	}
-	return strings.Trim(string(out), "\n"), nil
+	s := bufio.NewScanner(bytes.NewReader(out))
+	for s.Scan() {
+		line := s.Text()
+		fields := strings.Fields(line)
+		if fields[0] == "link/ether" {
+			return fields[1], nil
+		}
+	}
+	return "", fmt.Errorf("Could not find mac address")
 }

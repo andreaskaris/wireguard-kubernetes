@@ -163,33 +163,24 @@ func TestGetPathFromNamespace(t *testing.T) {
 }
 
 func TestGetInterfaceMac(t *testing.T) {
+	// set up mock data
+	commandInput := map[string]string{
+		"ip netns exec TestGetInterfaceMac ip link ls dev dummy0": `5: dummy0: <BROADCAST,NOARP> mtu 1500 qdisc noop state DOWN mode DEFAULT group default qlen 1000
+			    link/ether 00:ab:ab:ab:ab:ab brd ff:ff:ff:ff:ff:ff
+			    `,
+	}
+
+	// mock command
+	RunCommandWithOutput = func(cmd string, methodName string) ([]byte, error) {
+		out, ok := commandInput[cmd]
+		if !ok {
+			return []byte{}, fmt.Errorf("Unknown command '%s' in method '%s'", cmd, methodName)
+		}
+		return []byte(out), nil
+	}
+
+	// run the test now
 	expectedMac := "00:ab:ab:ab:ab:ab"
-
-	// test preparation
-	cmds := []string{
-		"ip netns add TestGetInterfaceMac",
-		"ip netns exec TestGetInterfaceMac ip link add dummy0 type dummy",
-		"ip netns exec TestGetInterfaceMac ip link set dev dummy0 address " + expectedMac,
-	}
-	for _, cmd := range cmds {
-		err := RunCommand(cmd, "TestGetInterfaceMac")
-		if err != nil {
-			t.Fatal(fmt.Sprintf("TestGetInterfaceMac(): Encountered unexpected error while creating test namespace %s: %s", "TestGetInterfaceMac", err))
-		}
-	}
-
-	// test teardown
-	defer func() {
-		cmds = []string{
-			"ip netns del TestGetInterfaceMac",
-		}
-		for _, cmd := range cmds {
-			err := RunCommand(cmd, "TestGetInterfaceMac")
-			if err != nil {
-				t.Fatal(fmt.Sprintf("TestGetInterfaceMac(): Encountered unexpected error while cleaning up test namespace %s: %s", "TestGetInterfaceMac", err))
-			}
-		}
-	}()
 
 	mac, err := GetInterfaceMac("TestGetInterfaceMac", "dummy0")
 	if err != nil {
