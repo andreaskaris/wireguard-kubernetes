@@ -87,7 +87,6 @@ func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wir
 	err = wireguard.InitWireguardTunnel(
 		wireguardNamespace,
 		wireguardInterface,
-		localOuterIp,
 		10000,
 		localInnerIp,
 		wireguardPrivateKey)

@@ -75,7 +75,7 @@ func EnsureBridge(wireguardNamespace, bridgeName, bridgeIp, bridgeIpNetmask stri
 	}
 
 	cmds := []string{
-		"ip netns exec " + wireguardNamespace + " ip link add  " + bridgeName + " type bridge",
+		"ip netns exec " + wireguardNamespace + " ip link add " + bridgeName + " type bridge",
 		"ip netns exec " + wireguardNamespace + " ip address add dev " + bridgeName + " " + bridgeIp + "/" + bridgeIpNetmask,
 		"ip netns exec " + wireguardNamespace + " ip link set dev " + bridgeName + " up",
 	}
@@ -235,7 +235,7 @@ func AddPublicKeyLabel(c kubernetes.Interface, hostName, pubKey string) error {
 
 // InitWireguardTunnel creates a new wireguard tunnel. It first deletes the existing tunnel, then it creates a new tunnel.
 // Todo: tunnel deletion is overly aggressive and whenever this process restarts, pod traffic would be interrupted.
-func InitWireguardTunnel(wireguardNamespace string, wireguardInterface string, localOuterIp net.IP, localOuterPort int, localInnerIp net.IP, localPrivateKey string) error {
+func InitWireguardTunnel(wireguardNamespace string, wireguardInterface string, localOuterPort int, localInnerIp net.IP, localPrivateKey string) error {
 	tunnelExists, err := isWireguardTunnel(wireguardNamespace, wireguardInterface)
 	if err != nil {
 		return err
@@ -244,14 +244,13 @@ func InitWireguardTunnel(wireguardNamespace string, wireguardInterface string, l
 	if tunnelExists {
 		err := deleteWireguardTunnel(wireguardNamespace, wireguardInterface)
 		if err != nil {
-			klog.V(5).Info("Could not delete tunnel endpoint: ", err)
+			return fmt.Errorf("Could not delete tunnel endpoint: %s", err)
 		}
 	}
 	// add new tunnels, for each peer
 	err = createWireguardTunnel(
 		wireguardNamespace,
 		wireguardInterface,
-		localOuterIp,
 		localOuterPort,
 		localInnerIp,
 		localPrivateKey,
@@ -382,7 +381,7 @@ func pruneWireguardTunnelPeerRoutes(wireguardNamespace, wireguardInterface strin
 	return nil
 }
 
-func createWireguardTunnel(wireguardNamespace string, wireguardInterface string, localOuterIp net.IP, localOuterPort int, localInnerIp net.IP, localPrivateKey string) error {
+func createWireguardTunnel(wireguardNamespace string, wireguardInterface string, localOuterPort int, localInnerIp net.IP, localPrivateKey string) error {
 	var cmds []string = []string{
 		"ip link add " + wireguardInterface + " type wireguard",
 		"wg set " + wireguardInterface + " private-key " + localPrivateKey + " listen-port " + strconv.Itoa(localOuterPort),
@@ -411,15 +410,19 @@ func deleteWireguardTunnel(wireguardNamespace string, interfaceName string) erro
 }
 
 func isWireguardTunnel(wireguardNamespace, wireguardInterface string) (bool, error) {
-	cmd := "ip netns exec " + wireguardNamespace + " ip -o a | awk '$2 ~ /^" + wireguardInterface + "$/ {print $2}'"
+	cmd := "ip netns exec " + wireguardNamespace + " ip -o a"
+
 	out, err := utils.RunCommandWithOutput(cmd, "isWireguardTunnel")
 	if err != nil {
 		return false, err
 	}
 	s := bufio.NewScanner(bytes.NewReader(out))
 	for s.Scan() {
-		text := s.Text()
-		return text == wireguardInterface, nil
+		line := s.Text()
+		fields := strings.Fields(line)
+		if fields[1] == wireguardInterface {
+			return true, nil
+		}
 	}
 	return false, nil
 }
