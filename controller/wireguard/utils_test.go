@@ -170,43 +170,68 @@ func TestEnsureNamespace(t *testing.T) {
 	}
 
 	tcs := []struct {
-		commandInput       map[string]string
-		wireguardNamespace string
-		errorExpected      bool
-		mustRunAllCommands bool
+		commandInput         map[string]string
+		wireguardNamespace   string
+		nodeDefaultInterface string
+		errorExpected        bool
+		mustRunAllCommands   bool
 	}{
 		{
 			commandInput: map[string]string{
 				"none": "",
 			},
-			wireguardNamespace: "wireguard",
-			errorExpected:      true,
+			wireguardNamespace:   "wireguard",
+			nodeDefaultInterface: "eth0",
+			errorExpected:        true,
 		},
 		{
 			commandInput: map[string]string{
 				"ip netns": `test
 wireguard
 `,
+				"ip link ls": `1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+3: to-wg-ns@if2: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default qlen 1000
+    link/ether f6:f4:31:45:ee:0a brd ff:ff:ff:ff:ff:ff link-netns wireguard-kubernetes
+60: eth0@if61: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default 
+    link/ether 02:42:ac:12:00:03 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+`,
 			},
-			wireguardNamespace: "wireguard",
-			errorExpected:      false,
+			wireguardNamespace:   "wireguard",
+			nodeDefaultInterface: "eth0",
+			errorExpected:        false,
 		},
 		{
 			commandInput: map[string]string{
 				"ip netns": `test
 `,
-				"ip netns add wireguard":                        "",
-				"ip netns exec wireguard ip link set dev lo up": "",
+				"ip link ls": `1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000
+    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+60: eth0@if61: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UP mode DEFAULT group default 
+    link/ether 02:42:ac:12:00:03 brd ff:ff:ff:ff:ff:ff link-netnsid 0
+`,
+				"ip netns add wireguard":                                                                "",
+				"ip netns exec wireguard ip link set dev lo up":                                         "",
+				"ip link add name to-wg-ns type veth peer name to-default-ns":                           "",
+				"ip link set dev to-default-ns netns wireguard":                                         "",
+				"ip address add dev to-wg-ns 169.254.0.1/30":                                            "",
+				"ip link set dev to-wg-ns up":                                                           "",
+				"ip netns exec wireguard ip address add dev to-default-ns 169.254.0.2/30":               "",
+				"ip netns exec wireguard ip link set dev to-default-ns up":                              "",
+				"ip netns exec wireguard ip route add default via 169.254.0.1 dev to-default-ns":        "",
+				"ip netns exec wireguard iptables -t nat -I POSTROUTING -o to-default-ns -j MASQUERADE": "",
+				"iptables -t nat -I POSTROUTING -o eth0 --src 169.254.0.2 -j MASQUERADE":                "",
 			},
-			wireguardNamespace: "wireguard",
-			errorExpected:      false,
-			mustRunAllCommands: true,
+			wireguardNamespace:   "wireguard",
+			nodeDefaultInterface: "eth0",
+			errorExpected:        false,
+			mustRunAllCommands:   true,
 		},
 	}
 
 	for k, tc := range tcs {
 		commandInput = tc.commandInput
-		err := EnsureNamespace(tc.wireguardNamespace)
+		err := EnsureNamespace(tc.wireguardNamespace, tc.nodeDefaultInterface)
 		if tc.errorExpected != (err != nil) {
 			t.Fatal(
 				fmt.Sprintf(
@@ -484,6 +509,7 @@ func TestUpdateWireguardTunnelPeers(t *testing.T) {
 		wireguardNamespace string
 		wireguardInterface string
 		pl                 PeerList
+		localPodCidr       string
 		errorExpected      bool
 		mustRunAllCommands bool
 	}{
@@ -497,9 +523,13 @@ toBePrunedKey`,
 				"ip netns exec wireguard ip route ls dev wg0 | grep -v 'proto kernel'": `10.244.0.0/24 via 10.0.0.2 
 10.245.5.0/24 via 100.64.0.105`,
 				"ip netns exec wireguard ip route delete 10.245.5.0/24 via 100.64.0.105": "",
+				"ip route ls dev to-wg-ns | grep -v 'proto kernel'": `10.244.0.0/24 via 169.254.0.2
+10.245.5.0/24 via 169.254.0.2`,
+				"ip route delete 10.245.5.0/24 via 169.254.0.2": "",
 			},
 			wireguardNamespace: "wireguard",
 			wireguardInterface: "wg0",
+			localPodCidr:       "10.145.0.0/24",
 			pl: PeerList{
 				"peerHostname": &Peer{
 					PeerHostname:  "peerHostname",
@@ -521,6 +551,7 @@ toBePrunedKey`,
 			tc.wireguardNamespace,
 			tc.wireguardInterface,
 			&tc.pl,
+			tc.localPodCidr,
 		)
 		if tc.errorExpected != (err != nil) {
 			t.Fatal(

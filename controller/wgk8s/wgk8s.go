@@ -68,14 +68,18 @@ func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wir
 	// retried the tunnel inner IP address of this node (currently 10.64.x.y where x.y are the last 2 octets from this node's node local IP)
 	localInnerIp := utils.GetInnerToOuterIp(localOuterIp, *internalRoutingNet)
 
-	// set up the local wireguard tunnel
-	if err := wireguard.EnsureNamespace(wireguardNamespace); err != nil {
+	nodeDefaultInterface, err := utils.GetInterfaceToIp(localOuterIp)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// set up the local wireguard tunnel namespace
+	if err := wireguard.EnsureNamespace(wireguardNamespace, nodeDefaultInterface); err != nil {
 		log.Fatal(err)
 	}
 
 	// set brw0's IP address to the first IP address in the node's PodCIDR
-	podCidrs, _ := utils.GetPodCidr(localNode)
-	bridgeIp, bridgeIpNetmask, err := utils.GetFirstNetworkAddress(podCidrs["ipv4"])
+	localPodCidrs, _ := utils.GetPodCidr(localNode)
+	bridgeIp, bridgeIpNetmask, err := utils.GetFirstNetworkAddress(localPodCidrs["ipv4"])
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -158,7 +162,8 @@ func Run(clientset kubernetes.Interface, localHostname, internalRoutingCidr, wir
 				err = wireguard.UpdateWireguardTunnelPeers(
 					wireguardNamespace,
 					wireguardInterface,
-					peerList)
+					peerList,
+					localPodCidrs["ipv4"])
 				if err != nil {
 					log.Fatal(err)
 				}

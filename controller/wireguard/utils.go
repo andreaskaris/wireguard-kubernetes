@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -91,9 +92,74 @@ func EnsureBridge(wireguardNamespace, bridgeName, bridgeIp, bridgeIpNetmask stri
 
 // EnsureNamespace creates a namespace with a given name only if the namespace does not exist yet.
 // Otherwise, it does nothing.
-func EnsureNamespace(wireguardNamespace string) error {
+func EnsureNamespace(wireguardNamespace, nodeDefaultInterface string) error {
+	err := createNamespace(wireguardNamespace)
+	if err != nil {
+		return err
+	}
+
+	err = connectNamespace(
+		wireguardNamespace,
+		"to-wg-ns",
+		"to-default-ns",
+		"169.254.0.1",
+		"169.254.0.2",
+		"30",
+		"eth0",
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// EnsureNamespace creates a namespace with a given name only if the namespace does not exist yet.
+// Otherwise, it does nothing.
+func connectNamespace(wireguardNamespace, toWireguardNsInterface, toDefaultNsInterface, toWireguardNsInterfaceIp, toDefaultNsInterfaceIp, privateLinkNetmask, nodeDefaultInterface string) error {
+	cmd := "ip link ls"
+	out, err := utils.RunCommandWithOutput(cmd, "connectNamespace")
+	if err != nil {
+		return err
+	}
+	s := bufio.NewScanner(bytes.NewReader(out))
+	for s.Scan() {
+		line := s.Text()
+		fields := strings.Fields(line)
+		// to-wg-ns@if6:
+		if matched, err := regexp.MatchString(`^`+toWireguardNsInterface+`@.*`, fields[1]); err != nil {
+			return err
+		} else if matched {
+			return nil
+		}
+	}
+
+	cmds := []string{
+		"ip link add name " + toWireguardNsInterface + " type veth peer name " + toDefaultNsInterface,
+		"ip link set dev " + toDefaultNsInterface + " netns " + wireguardNamespace + "",
+		"ip address add dev " + toWireguardNsInterface + " " + toWireguardNsInterfaceIp + "/" + privateLinkNetmask,
+		"ip link set dev " + toWireguardNsInterface + " up",
+		"ip netns exec " + wireguardNamespace + " ip address add dev " + toDefaultNsInterface + " " + toDefaultNsInterfaceIp + "/" + privateLinkNetmask,
+		"ip netns exec " + wireguardNamespace + " ip link set dev " + toDefaultNsInterface + " up",
+		"ip netns exec " + wireguardNamespace + " ip route add default via " + toWireguardNsInterfaceIp + " dev " + toDefaultNsInterface + "",
+		"ip netns exec " + wireguardNamespace + " iptables -t nat -I POSTROUTING -o " + toDefaultNsInterface + " -j MASQUERADE",
+		"iptables -t nat -I POSTROUTING -o " + nodeDefaultInterface + " --src " + toDefaultNsInterfaceIp + " -j MASQUERADE",
+	}
+	for _, cmd := range cmds {
+		err = utils.RunCommand(cmd, "connectNamespace")
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// EnsureNamespace creates a namespace with a given name only if the namespace does not exist yet.
+// Otherwise, it does nothing.
+func createNamespace(wireguardNamespace string) error {
 	cmd := "ip netns"
-	out, err := utils.RunCommandWithOutput(cmd, "EnsureNamespace")
+	out, err := utils.RunCommandWithOutput(cmd, "createNamespace")
 	if err != nil {
 		return err
 	}
@@ -107,13 +173,13 @@ func EnsureNamespace(wireguardNamespace string) error {
 	}
 
 	cmd = "ip netns add " + wireguardNamespace
-	err = utils.RunCommand(cmd, "EnsureNamespace")
+	err = utils.RunCommand(cmd, "createNamespace")
 	if err != nil {
 		return err
 	}
 
 	cmd = "ip netns exec " + wireguardNamespace + " ip link set dev lo up"
-	err = utils.RunCommand(cmd, "EnsureNamespace")
+	err = utils.RunCommand(cmd, "createNamespace")
 	if err != nil {
 		return err
 	}
@@ -262,7 +328,7 @@ func InitWireguardTunnel(wireguardNamespace string, wireguardInterface string, l
 }
 
 // UpdateWireguardTunnelPeers applied the contents of pl *PeerList to the wireguard tunnel. Dead routes and peers will be pruned.
-func UpdateWireguardTunnelPeers(wireguardNamespace string, wireguardInterface string, pl *PeerList) error {
+func UpdateWireguardTunnelPeers(wireguardNamespace string, wireguardInterface string, pl *PeerList, localPodCidr string) error {
 	klog.V(5).Info("Updating wireguard tunnels with peer list: ", *pl)
 	err := setWireguardTunnelPeers(wireguardNamespace, wireguardInterface, pl)
 	if err != nil {
@@ -274,12 +340,22 @@ func UpdateWireguardTunnelPeers(wireguardNamespace string, wireguardInterface st
 		return err
 	}
 
+	err = setWireguardNamespaceRoutes("to-wg-ns", "169.254.0.2", pl, localPodCidr)
+	if err != nil {
+		return err
+	}
+
 	err = pruneWireguardTunnelPeers(wireguardNamespace, wireguardInterface, pl)
 	if err != nil {
 		return err
 	}
 
 	err = pruneWireguardTunnelPeerRoutes(wireguardNamespace, wireguardInterface, pl)
+	if err != nil {
+		return err
+	}
+
+	err = pruneWireguardNamespaceRoutes("to-wg-ns", "169.254.0.2", pl, localPodCidr)
 	if err != nil {
 		return err
 	}
@@ -303,7 +379,25 @@ func setWireguardTunnelPeerRoutes(wireguardNamespace string, wireguardInterface 
 	var err error
 	for _, p := range *pl {
 		cmd := "ip netns exec " + wireguardNamespace + " ip route add " + p.PeerPodSubnet + " via " + p.PeerInnerIp.String() + " dev " + wireguardInterface
-		err = utils.RunCommand(cmd, "setWireguardTunnelPeers")
+		err = utils.RunCommand(cmd, "setWireguardTunnelPeerRoutes")
+		if err != nil {
+			klog.V(1).Info(err)
+		}
+	}
+	return nil
+}
+
+func setWireguardNamespaceRoutes(toWireguardNsInterface, toWireguardNsInterfaceIp string, pl *PeerList, localPodCidr string) error {
+	var err error
+	ips := []string{
+		localPodCidr,
+	}
+	for _, p := range *pl {
+		ips = append(ips, p.PeerPodSubnet)
+	}
+	for _, ip := range ips {
+		cmd := "ip route add " + ip + " via " + toWireguardNsInterfaceIp + " dev " + toWireguardNsInterface + ""
+		err = utils.RunCommand(cmd, "setWireguardNamespaceRoutes")
 		if err != nil {
 			klog.V(1).Info(err)
 		}
@@ -371,6 +465,49 @@ func pruneWireguardTunnelPeerRoutes(wireguardNamespace, wireguardInterface strin
 		if !found {
 			cmd := "ip netns exec " + wireguardNamespace + " ip route delete " + currentRoute
 			err := utils.RunCommand(cmd, "pruneWireguardTunnelPeerRoutes")
+			if err != nil {
+				klog.V(1).Info("Could not prune route ", currentRoute, ": ", err)
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func pruneWireguardNamespaceRoutes(toWireguardInterface, toWireguardInterfaceIp string, pl *PeerList, localPodCidr string) error {
+	var err error
+	var currentRoutes []string
+	ips := []string{
+		localPodCidr,
+	}
+	for _, p := range *pl {
+		ips = append(ips, p.PeerPodSubnet)
+	}
+
+	cmd := "ip route ls dev " + toWireguardInterface + " | grep -v 'proto kernel'"
+
+	out, err := utils.RunCommandWithOutput(cmd, "pruneWireguardNamespaceRoutes")
+	if err != nil {
+		return err
+	}
+	s := bufio.NewScanner(bytes.NewReader(out))
+	for s.Scan() {
+		currentRoutes = append(currentRoutes, s.Text())
+	}
+
+	for _, currentRoute := range currentRoutes {
+		found := false
+		currentSubnet := strings.Fields(currentRoute)[0]
+		for _, ip := range ips {
+			if ip == currentSubnet {
+				found = true
+				break
+			}
+		}
+		if !found {
+			cmd := "ip route delete " + currentRoute
+			err := utils.RunCommand(cmd, "pruneWireguardNamespaceRoutes")
 			if err != nil {
 				klog.V(1).Info("Could not prune route ", currentRoute, ": ", err)
 				return err
