@@ -174,3 +174,19 @@ func GetInterfaceMac(namespace, interfaceName string) (string, error) {
 	}
 	return "", fmt.Errorf("Could not find mac address")
 }
+
+func GetInterfaceToIp(ip net.IP) (string, error) {
+	cmd := "ip -o address | grep " + ip.String()
+	out, err := RunCommandWithOutput(cmd, "GetInterfaceToIp")
+	if err != nil {
+		return "", err
+	}
+	s := bufio.NewScanner(bytes.NewReader(out))
+	// return the first field
+	for s.Scan() {
+		line := s.Text()
+		fields := strings.Fields(line)
+		return fields[1], nil
+	}
+	return "", fmt.Errorf("Could not find mac address")
+}

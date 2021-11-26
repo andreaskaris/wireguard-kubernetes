@@ -1,5 +1,5 @@
 FROM registry.fedoraproject.org/fedora:35
-RUN yum install wireguard-tools iproute iputils -y
+RUN yum install wireguard-tools iproute iputils iptables-legacy -y
 ADD bin/ /
 COPY entrypoint.sh /entrypoint.sh
 ENTRYPOINT [ "/entrypoint.sh" ]

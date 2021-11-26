@@ -190,3 +190,31 @@ func TestGetInterfaceMac(t *testing.T) {
 		t.Fatal(fmt.Sprintf("GetInterfaceMac(%s, %s): Expected to get mac address %s, instead got %s", "TestGetInterfaceMac", "dummy0", expectedMac, mac))
 	}
 }
+
+func TestGetInterfaceToIp(t *testing.T) {
+	// set up mock data
+	commandInput := map[string]string{
+		"ip -o address | grep 192.168.122.79": `2: eth0    inet 192.168.122.79/24 brd 192.168.122.255 scope global dynamic noprefixroute eth0\       valid_lft 2209sec preferred_lft 2209sec
+		`,
+	}
+
+	// mock command
+	RunCommandWithOutput = func(cmd string, methodName string) ([]byte, error) {
+		out, ok := commandInput[cmd]
+		if !ok {
+			return []byte{}, fmt.Errorf("Unknown command '%s' in method '%s'", cmd, methodName)
+		}
+		return []byte(out), nil
+	}
+
+	// run the test now
+	ipAddress := "192.168.122.79"
+	expectedInterface := "eth0"
+	intf, err := GetInterfaceToIp(net.ParseIP(ipAddress))
+	if err != nil {
+		t.Fatal(fmt.Sprintf("GetInterfaceToIp(%s): Expected to return nil error, instead got %s", ipAddress, err))
+	}
+	if intf != expectedInterface {
+		t.Fatal(fmt.Sprintf("GetInterfaceToIp(%s): Expected to get interface name %s, instead got %s", ipAddress, expectedInterface, intf))
+	}
+}

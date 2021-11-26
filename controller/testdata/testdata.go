@@ -242,7 +242,7 @@ var WorkerNodeLocal = &corev1.Node{
 		Addresses: []corev1.NodeAddress{
 			corev1.NodeAddress{
 				Type:    corev1.NodeInternalIP,
-				Address: "172.18.0.106",
+				Address: "172.18.0.1",
 			},
 		},
 	},
