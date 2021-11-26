@@ -1,4 +1,4 @@
-name: Unit tests
+name: e2e tests
 on:
   pull_request:
     branches: [ master ]
@@ -7,7 +7,7 @@ env:
   GO: "1.16.8"
 
 jobs:
-  unit-tests:
+  e2e-tests:
     runs-on: ubuntu-latest
     steps:
       - name: Configure go version
@@ -20,4 +20,4 @@ jobs:
 
       - name: Deploy kind environment
         run: |
-          sudo env "PATH=$PATH" shells/kind.sh
+          sudo env "PATH=$PATH" scripts/kind.sh
