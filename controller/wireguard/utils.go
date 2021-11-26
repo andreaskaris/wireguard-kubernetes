@@ -143,6 +143,7 @@ func connectNamespace(wireguardNamespace, toWireguardNsInterface, toDefaultNsInt
 		"ip netns exec " + wireguardNamespace + " ip link set dev " + toDefaultNsInterface + " up",
 		"ip netns exec " + wireguardNamespace + " ip route add default via " + toWireguardNsInterfaceIp + " dev " + toDefaultNsInterface + "",
 		"ip netns exec " + wireguardNamespace + " iptables -t nat -I POSTROUTING -o " + toDefaultNsInterface + " -j MASQUERADE",
+		"ip netns exec " + wireguardNamespace + " iptables -t nat -I POSTROUTING --src " + toWireguardNsInterfaceIp + " -j MASQUERADE",
 		"iptables -t nat -I POSTROUTING -o " + nodeDefaultInterface + " --src " + toDefaultNsInterfaceIp + " -j MASQUERADE",
 	}
 	for _, cmd := range cmds {
