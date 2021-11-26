@@ -1,0 +1,23 @@
+name: Unit tests
+on:
+  pull_request:
+    branches: [ master ]
+
+env:
+  GO: "1.16.8"
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure go version
+        uses: actions/setup-go@v2
+        with:
+          go-version: ${{ env.GO }}
+
+      - name: Check out repository code
+        uses: actions/checkout@v2
+
+      - name: Deploy kind environment
+        run: |
+          sudo env "PATH=$PATH" shells/kind.sh
