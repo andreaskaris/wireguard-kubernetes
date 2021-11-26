@@ -21,3 +21,7 @@ jobs:
       - name: Deploy kind environment
         run: |
           sudo env "PATH=$PATH" scripts/kind.sh
+
+      - name: Run e2e tests
+        run: |
+          sudo env "PATH=$PATH" scripts/e2e.sh

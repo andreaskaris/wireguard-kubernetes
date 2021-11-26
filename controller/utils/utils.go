@@ -188,5 +188,5 @@ func GetInterfaceToIp(ip net.IP) (string, error) {
 		fields := strings.Fields(line)
 		return fields[1], nil
 	}
-	return "", fmt.Errorf("Could not find mac address")
+	return "", fmt.Errorf("Could not find interface name")
 }

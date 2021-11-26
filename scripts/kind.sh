@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 CLUSTER_CONFIG_FILE=""
 
