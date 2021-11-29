@@ -443,7 +443,7 @@ func pruneWireguardTunnelPeerRoutes(wireguardNamespace, wireguardInterface strin
 	var err error
 	var currentRoutes []string
 
-	cmd := "ip netns exec " + wireguardNamespace + " ip route ls dev " + wireguardInterface + " | grep -v 'proto kernel'"
+	cmd := "ip netns exec " + wireguardNamespace + " ip route ls dev " + wireguardInterface
 
 	out, err := utils.RunCommandWithOutput(cmd, "pruneWireguardTunnelPeerRoutes")
 	if err != nil {
@@ -451,6 +451,9 @@ func pruneWireguardTunnelPeerRoutes(wireguardNamespace, wireguardInterface strin
 	}
 	s := bufio.NewScanner(bytes.NewReader(out))
 	for s.Scan() {
+		if matched, _ := regexp.Match(".*proto kernel.*", []byte(s.Text())); matched {
+			continue
+		}
 		currentRoutes = append(currentRoutes, s.Text())
 	}
 
@@ -486,7 +489,7 @@ func pruneWireguardNamespaceRoutes(toWireguardInterface, toWireguardInterfaceIp 
 		ips = append(ips, p.PeerPodSubnet)
 	}
 
-	cmd := "ip route ls dev " + toWireguardInterface + " | grep -v 'proto kernel'"
+	cmd := "ip route ls dev " + toWireguardInterface
 
 	out, err := utils.RunCommandWithOutput(cmd, "pruneWireguardNamespaceRoutes")
 	if err != nil {
@@ -494,6 +497,9 @@ func pruneWireguardNamespaceRoutes(toWireguardInterface, toWireguardInterfaceIp 
 	}
 	s := bufio.NewScanner(bytes.NewReader(out))
 	for s.Scan() {
+		if matched, _ := regexp.Match(".*proto kernel.*", []byte(s.Text())); matched {
+			continue
+		}
 		currentRoutes = append(currentRoutes, s.Text())
 	}
 
@@ -526,7 +532,7 @@ func createWireguardTunnel(wireguardNamespace string, wireguardInterface string,
 		"ip link set dev " + wireguardInterface + " netns " + wireguardNamespace,
 
 		"ip netns exec " + wireguardNamespace + " ip link set dev " + wireguardInterface + " up",
-		"ip netns exec " + wireguardNamespace + " ip address add dev " + wireguardInterface + " " + localInnerIp.String() + "/24",
+		"ip netns exec " + wireguardNamespace + " ip address add dev " + wireguardInterface + " " + localInnerIp.String() + "/16",
 	}
 
 	for _, cmd := range cmds {
