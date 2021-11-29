@@ -11,8 +11,11 @@ if ! [ -f /usr/local/bin/e2e.test ]; then
 		cd kubernetes
 		git checkout -t origin/release-1.21
 		# https://github.com/kubernetes/community/blob/master/contributors/devel/sig-testing/e2e-tests.md
-		make WHAT=test/e2e/e2e.test GOGCFLAGS="all=-N -l" GOLDFLAGS=""
-		\cp ./_output/bin/e2e.test /usr/local/bin/e2e.test
+		# for debugging
+		#make WHAT=test/e2e/e2e.test GOGCFLAGS="all=-N -l" GOLDFLAGS=""
+		# statically linked
+		make WHAT=test/e2e/e2e.test CGO_ENABLED=0 GOOS=linux GOGCFLAGS="" GOLDFLAGS='-extldflags "-static"'
+		cp ./_output/bin/e2e.test /usr/local/bin/e2e.test
 	else 
 		# from https://github.com/ovn-org/ovn-kubernetes/blob/master/test/scripts/install-kind.sh
 		echo "Downloading e2e tests"
