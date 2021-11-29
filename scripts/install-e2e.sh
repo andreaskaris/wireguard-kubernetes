@@ -16,8 +16,8 @@ if ! [ -f /usr/local/bin/e2e.test ]; then
 	else 
 		# from https://github.com/ovn-org/ovn-kubernetes/blob/master/test/scripts/install-kind.sh
 		echo "Downloading e2e tests"
-		curl -L "https://github.com/andreaskaris/e2e-binaries/blob/master/e2e.tag.gz?raw=true" -o e2e.tag.gz
-		tar xvzf e2e.tag.gz
+		curl -L "https://github.com/andreaskaris/e2e-binaries/blob/master/e2e.tar.gz?raw=true" -o e2e.tar.gz
+		tar xvzf e2e.tar.gz
 		mv ./e2e.test /usr/local/bin/e2e.test
 	fi
 fi
