@@ -1,6 +1,9 @@
 package testdata
 
 import (
+	"os/exec"
+	"strings"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -241,8 +244,15 @@ var WorkerNodeLocal = &corev1.Node{
 	Status: corev1.NodeStatus{
 		Addresses: []corev1.NodeAddress{
 			corev1.NodeAddress{
-				Type:    corev1.NodeInternalIP,
-				Address: "172.18.0.1",
+				Type: corev1.NodeInternalIP,
+				Address: func() string {
+					cmd := "ip -4 -o a ls dev $(ip r | awk '/default/ {print $5}') | awk '{print $4}' | awk -F '/' '{print $1}'"
+					out, err := exec.Command("/bin/bash", "-c", cmd).Output()
+					if err != nil {
+						return "172.18.0.1"
+					}
+					return strings.Trim(string(out), "\n")
+				}(),
 			},
 		},
 	},
