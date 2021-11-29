@@ -17,7 +17,7 @@ cat <<EOF > /etc/cni/net.d/05-wireguard-cni.conflist
                                                 { "dst": "0.0.0.0/0" }
                                 ],
                                 "ranges": [
-                                        [ { "subnet": "10.244.2.0/24" } ]
+                                        [ { "subnet": "${PodCIDR}" } ]
                                 ]
                         }
                 },
