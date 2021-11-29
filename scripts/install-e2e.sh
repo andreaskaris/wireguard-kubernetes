@@ -10,7 +10,8 @@ if ! [ -f /usr/local/bin/e2e.test ]; then
 		git clone https://github.com/kubernetes/kubernetes
 		cd kubernetes
 		git checkout -t origin/release-1.21
-		make WHAT="test/e2e/e2e.test"
+		# https://github.com/kubernetes/community/blob/master/contributors/devel/sig-testing/e2e-tests.md
+		make WHAT=test/e2e/e2e.test GOGCFLAGS="all=-N -l" GOLDFLAGS=""
 		\cp ./_output/bin/e2e.test /usr/local/bin/e2e.test
 	else 
 		# from https://github.com/ovn-org/ovn-kubernetes/blob/master/test/scripts/install-kind.sh
