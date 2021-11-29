@@ -430,7 +430,7 @@ func TestInitWireguardTunnel(t *testing.T) {
 				"wg set wg0 private-key privateKey listen-port 10000":        "",
 				"ip link set dev wg0 netns wireguard":                        "",
 				"ip netns exec wireguard ip link set dev wg0 up":             "",
-				"ip netns exec wireguard ip address add dev wg0 10.0.0.1/24": "",
+				"ip netns exec wireguard ip address add dev wg0 10.0.0.1/16": "",
 			},
 			wireguardNamespace: "wireguard",
 			wireguardInterface: "wg0",
@@ -521,10 +521,12 @@ func TestUpdateWireguardTunnelPeers(t *testing.T) {
 				"ip netns exec wireguard wg show wg0 | awk '/^peer/ {print $2}'": `peerPublicKey
 toBePrunedKey`,
 				"ip netns exec wireguard wg set wg0 peer toBePrunedKey remove": "",
-				"ip netns exec wireguard ip route ls dev wg0 | grep -v 'proto kernel'": `10.244.0.0/24 via 10.0.0.2 
+				"ip netns exec wireguard ip route ls dev wg0": `100.64.122.0/24 proto kernel scope link src 100.64.122.79 
+				10.244.0.0/24 via 10.0.0.2 
 10.245.5.0/24 via 100.64.0.105`,
 				"ip netns exec wireguard ip route delete 10.245.5.0/24 via 100.64.0.105": "",
-				"ip route ls dev to-wg-ns | grep -v 'proto kernel'": `10.244.0.0/24 via 169.254.0.2
+				"ip route ls dev to-wg-ns": `100.64.122.0/24 proto kernel scope link src 100.64.122.79
+				10.244.0.0/24 via 169.254.0.2
 10.245.5.0/24 via 169.254.0.2`,
 				"ip route delete 10.245.5.0/24 via 169.254.0.2": "",
 			},
